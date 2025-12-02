@@ -52,3 +52,23 @@ POST to `/webhook` with JSON body like:
 - Commits workflow to `.github/workflows/<repo>-ci.yml` on a newly created branch `add-ci-<timestamp>`.
 - Jira comment includes the commit URL.
  - `.env` is loaded automatically via `python-dotenv`.
+
+## Flow Chart
+
+```mermaid
+flowchart TD
+  A[Jira Automation Webhook]\nPOST /webhook --> B[Parse Payload]
+  B --> C{Validate Fields}
+  C -- missing repo/language --> E[Return error]
+  C -- ok --> D[Generate Workflow YAML]
+  D --> F[Get repo main SHA]
+  F --> G[Create branch add-ci-<timestamp>]
+  G --> H[Commit .github/workflows/<repo>-ci.yml]
+  H --> I[Push commit]
+  I --> J[Post Jira comment with commit URL]
+  J --> K{Optional: Open PR}
+  K -- yes --> L[Create PR to main]
+  K -- no --> M[Done]
+  L --> N[CI/CD runs on PR]
+  N --> O[Merge & Deploy]
+```
