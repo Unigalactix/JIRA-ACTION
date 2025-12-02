@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request
 from lib.workflow_factory import generate_workflow
-from lib.github import commit_workflow
+from lib.github import commit_workflow, create_pull_request
 from lib.jira import post_jira_comment
 import os
 from dotenv import load_dotenv
@@ -29,7 +29,14 @@ async def webhook(req: Request):
     branch = f"add-ci-{int(os.times()[4])}"
     commit_info = commit_workflow(owner, repo, branch, workflow_content)
 
-    # Post back to Jira
-    post_jira_comment(issue_key, f"✅ Workflow created:\nFile: .github/workflows/{repo}-ci.yml\nCommit: {commit_info['commit_url']}")
+    # Create PR to main
+    pr_info = create_pull_request(owner, repo, commit_info["branch"], issue_key)
 
-    return {"status": "success", "commit_url": commit_info["commit_url"]}
+    # Post back to Jira
+    post_jira_comment(issue_key, (
+        f"✅ Workflow created and PR opened.\n"
+        f"File: .github/workflows/{repo}-ci.yml\n"
+        f"Commit: {commit_info['commit_url']}\n"
+        f"PR: {pr_info['pr_url']}"
+    ))
+    return {"status": "success", "commit_url": commit_info["commit_url"], "pr_url": pr_info["pr_url"]}

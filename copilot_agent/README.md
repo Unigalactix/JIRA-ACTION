@@ -65,10 +65,8 @@ flowchart TD
   F --> G[Create branch add-ci-<timestamp>]
   G --> H[Commit .github/workflows/<repo>-ci.yml]
   H --> I[Push commit]
-  I --> J[Post Jira comment with commit URL]
-  J --> K{Optional: Open PR}
-  K -- yes --> L[Create PR to main]
-  K -- no --> M[Done]
+  I --> L[Create PR to main]
+  L --> J[Post Jira comment with commit & PR URLs]
   L --> N[CI/CD runs on PR]
   N --> O[Merge & Deploy]
 ```
