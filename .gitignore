@@ -24,3 +24,6 @@ node_modules/
 
 # GitHub Actions local
 .github/workflows/*.tmp
+
+# Project planning notes
+NEXSTEPS
