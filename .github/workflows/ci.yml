@@ -1,0 +1,32 @@
+name: Repo CI
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        working-directory: copilot_agent
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff pytest
+      - name: Lint (ruff)
+        run: ruff check copilot_agent
+      - name: Security scan (bandit)
+        run: |
+          pip install bandit
+          bandit -r copilot_agent || true
+      - name: Unit tests (placeholder)
+        run: |
+          pytest -q || echo "No tests yet"

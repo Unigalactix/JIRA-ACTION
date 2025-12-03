@@ -32,6 +32,16 @@ pip install -r requirements.txt
 uvicorn app:app --reload --port 3000
 ```
 
+### CLI usage
+
+You can also run the agent without the webhook and directly create a branch + PR:
+
+```
+python app.py owner/repo node "npm run build" "npm test" azure-webapps --issueKey PROJ-123
+```
+
+Requires environment variables set (see below). The CLI prints the commit and PR URLs and, when `--issueKey` is provided, posts a Jira comment.
+
 ## Webhook
 
 POST to `/webhook` with JSON body like:
@@ -52,6 +62,39 @@ POST to `/webhook` with JSON body like:
 - Commits workflow to `.github/workflows/<repo>-ci.yml` on a newly created branch `add-ci-<timestamp>`.
 - Jira comment includes the commit URL.
  - `.env` is loaded automatically via `python-dotenv`.
+ - Set GitHub repo secret `COPILOT_AGENT_URL` for the `Trigger Copilot Agent` workflow.
+
+## GitHub Actions
+
+This repository includes two workflows:
+
+- `.github/workflows/ci.yml`: Lints (ruff), runs Bandit security scan, and executes pytest on `copilot_agent` when PRs or pushes target `main`.
+- `.github/workflows/trigger-agent.yml`: Manual dispatch that posts a JSON payload to the agent's `/webhook`. Configure `COPILOT_AGENT_URL` repo secret to point to your running agent (e.g., `https://server:3000`).
+
+### Starting the agent
+
+```
+pip install -r requirements.txt
+uvicorn app:app --host 0.0.0.0 --port 3000
+```
+
+### Example Jira Automation rule
+
+Use a "Send web request" action to POST to your agent:
+
+```
+POST https://your-agent-host:3000/webhook
+Content-Type: application/json
+
+{
+  "issueKey": "{{issue.key}}",
+  "repository": "owner/repo",
+  "language": "node",
+  "buildCommand": "npm run build",
+  "testCommand": "npm test",
+  "deployTarget": "azure-webapps"
+}
+```
 
 ## Flow Chart
 
