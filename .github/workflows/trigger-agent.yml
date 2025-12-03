@@ -1,0 +1,49 @@
+name: Trigger Copilot Agent
+
+on:
+  workflow_dispatch:
+    inputs:
+      issueKey:
+        description: Jira issue key (e.g., PROJ-123)
+        required: true
+      repository:
+        description: Target GitHub repo (owner/repo)
+        required: true
+      language:
+        description: Project language (node|python|dotnet|java)
+        required: true
+      buildCommand:
+        description: Build command (e.g., npm run build)
+        required: true
+      testCommand:
+        description: Test command (e.g., npm test)
+        required: true
+      deployTarget:
+        description: Deploy target (e.g., azure-webapps)
+        required: true
+
+jobs:
+  call-agent:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call agent webhook
+        env:
+          AGENT_URL: ${{ secrets.COPILOT_AGENT_URL }}
+        run: |
+          if [ -z "$AGENT_URL" ]; then
+            echo "COPILOT_AGENT_URL secret is not set" >&2
+            exit 1
+          fi
+          echo "Posting payload to $AGENT_URL/webhook"
+          curl -sS -X POST "$AGENT_URL/webhook" \
+            -H "Content-Type: application/json" \
+            -d @- << 'JSON'
+          {
+            "issueKey": "${{ inputs.issueKey }}",
+            "repository": "${{ inputs.repository }}",
+            "language": "${{ inputs.language }}",
+            "buildCommand": "${{ inputs.buildCommand }}",
+            "testCommand": "${{ inputs.testCommand }}",
+            "deployTarget": "${{ inputs.deployTarget }}"
+          }
+JSON
