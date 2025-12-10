@@ -46,4 +46,3 @@ jobs:
             "testCommand": "${{ inputs.testCommand }}",
             "deployTarget": "${{ inputs.deployTarget }}"
           }
-JSON

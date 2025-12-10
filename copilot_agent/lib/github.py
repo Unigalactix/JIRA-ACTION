@@ -1,9 +1,9 @@
-from github import Github
+from github import Github, InputGitTreeElement
 import os
 
 
 def commit_workflow(owner, repo, branch, workflow_content):
-    token = os.getenv("GITHUB_TOKEN")
+    token = os.getenv("GHUB_TOKEN")
     if not token:
         raise RuntimeError("GITHUB_TOKEN environment variable is not set")
 
@@ -23,9 +23,9 @@ def commit_workflow(owner, repo, branch, workflow_content):
     # Create blob and commit
     path = f".github/workflows/{repo}-ci.yml"
     blob = repository.create_git_blob(workflow_content, "utf-8")
-    tree = repository.create_git_tree([
-        {"path": path, "mode": "100644", "type": "blob", "sha": blob.sha}
-    ], base_tree=sha)
+    element = InputGitTreeElement(path=path, mode="100644", type="blob", sha=blob.sha)
+    base_tree = repository.get_git_tree(sha)
+    tree = repository.create_git_tree([element], base_tree=base_tree)
     commit = repository.create_git_commit("Add CI/CD workflow", tree, [repository.get_git_commit(sha)])
     repository.get_git_ref(f"heads/{branch}").edit(commit.sha)
 
@@ -36,7 +36,7 @@ def create_pull_request(owner, repo, branch, issue_key=None):
     """Create a Pull Request from the branch into main.
     Optionally include Jira issue key in the title/body.
     """
-    token = os.getenv("GITHUB_TOKEN")
+    token = os.getenv("GHUB_TOKEN")
     if not token:
         raise RuntimeError("GITHUB_TOKEN environment variable is not set")
 
@@ -53,3 +53,48 @@ def create_pull_request(owner, repo, branch, issue_key=None):
 
     pr = repository.create_pull(title=title, body=body, head=branch, base="main")
     return {"pr_url": pr.html_url, "pr_number": pr.number}
+
+
+def apply_text_patches(owner, repo, base_branch, new_branch, changes):
+    """Apply simple text replacements to files and commit on a new branch.
+
+    changes: list of {"path": "relative/file/path", "find": "text", "replace": "text"}
+    """
+    token = os.getenv("GHUB_TOKEN")
+    if not token:
+        raise RuntimeError("GHUB_TOKEN environment variable is not set")
+
+    g = Github(token)
+    repository = g.get_repo(f"{owner}/{repo}")
+
+    # Get base ref and create new branch from it if missing
+    base_ref = repository.get_git_ref(f"heads/{base_branch}")
+    base_sha = base_ref.object.sha
+    try:
+        repository.get_git_ref(f"heads/{new_branch}")
+    except Exception:
+        repository.create_git_ref(ref=f"refs/heads/{new_branch}", sha=base_sha)
+
+    # Prepare blobs and tree elements for changed files
+    elements = []
+    for ch in changes:
+        path = ch["path"]
+        try:
+            file = repository.get_contents(path, ref=base_branch)
+            content = file.decoded_content.decode("utf-8")
+        except Exception:
+            raise RuntimeError(f"Cannot read file '{path}' from branch {base_branch}")
+
+        new_content = content.replace(ch.get("find", ""), ch.get("replace", ""))
+        blob = repository.create_git_blob(new_content, "utf-8")
+        elements.append(InputGitTreeElement(path=path, mode="100644", type="blob", sha=blob.sha))
+
+    # Create tree and commit against current branch tip
+    branch_ref = repository.get_git_ref(f"heads/{new_branch}")
+    branch_sha = branch_ref.object.sha
+    base_tree = repository.get_git_tree(branch_sha)
+    tree = repository.create_git_tree(elements, base_tree=base_tree)
+    commit = repository.create_git_commit("Apply automated fixes from Jira", tree, [repository.get_git_commit(branch_sha)])
+    branch_ref.edit(commit.sha)
+
+    return {"commit_url": f"https://github.com/{owner}/{repo}/commit/{commit.sha}", "branch": new_branch}
