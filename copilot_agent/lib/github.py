@@ -51,8 +51,39 @@ def create_pull_request(owner, repo, branch, issue_key=None):
     if issue_key:
         body += f"Linked Jira issue: {issue_key}\n"
 
+
     pr = repository.create_pull(title=title, body=body, head=branch, base="main")
     return {"pr_url": pr.html_url, "pr_number": pr.number}
+
+
+def create_copilot_issue(owner, repo, issue_key, summary, description):
+    """Create a GitHub Issue to trigger Copilot Agent.
+    """
+    token = os.getenv("GITHUB_TOKEN")
+    if not token:
+        raise RuntimeError("GITHUB_TOKEN environment variable is not set")
+
+    g = Github(token)
+    repository = g.get_repo(f"{owner}/{repo}")
+
+    title = f"[{issue_key}] Fix: {summary}"
+    body = (
+        f"@copilot please fix this issue based on the following requirements.\n\n"
+        f"**Jira Issue**: {issue_key}\n"
+        f"**Description**:\n{description}\n"
+    )
+
+    # Create the issue
+    issue = repository.create_issue(title=title, body=body)
+
+    # Try to assign to copilot if possible (optional, mention in body is primary trigger)
+    # Note: explicit assignment might fail if @copilot isn't a "member", but mention works.
+    try:
+        issue.add_to_assignees("copilot")
+    except Exception:
+        pass  # Ignore if assignment fails, the mention in body is key.
+
+    return {"issue_url": issue.html_url, "issue_number": issue.number}
 
 
 def apply_text_patches(owner, repo, base_branch, new_branch, changes):

@@ -31,69 +31,63 @@ async def webhook(req: Request):
         if not repository or not language:
             return {"status": "error", "message": "Missing required fields: repository, language"}
 
-        # Generate workflow YAML
-        workflow_content = generate_workflow(repository, language, build_cmd, test_cmd, deploy_target)
-
-        # Commit workflow to GitHub
-        owner, repo = repository.split("/")
-        branch = f"add-ci-{repo}-{int(time.time())}-{uuid.uuid4().hex[:8]}"
-        commit_info = commit_workflow(owner, repo, branch, workflow_content)
-
-        # Create PR to main (current lib signature)
-        pr_info = create_pull_request(owner, repo, commit_info["branch"], issue_key)
-
-        # If Jira issue contains auto-fix instructions, apply them in a follow-up PR
-        autofix_result = None
-        if issue_key:
-            details = get_issue_details(issue_key)
-            description = (details.get("description") or "").strip()
-            changes = []
-            for line in description.splitlines():
-                parts = [p.strip() for p in line.split(",")]
-                entry = {}
-                for p in parts:
-                    if "=" in p:
-                        k, v = p.split("=", 1)
-                        entry[k.strip()] = v.strip()
-                if entry.get("path") and (entry.get("find") is not None) and (entry.get("replace") is not None):
-                    changes.append({"path": entry["path"], "find": entry.get("find", ""), "replace": entry.get("replace", "")})
-            if changes:
-                fix_branch = f"autofix-{issue_key.lower()}-{uuid.uuid4().hex[:8]}"
-                try:
-                    fix_commit = apply_text_patches(owner, repo, "main", fix_branch, changes)
-                    fix_pr = create_pull_request(owner, repo, fix_commit["branch"], issue_key)
-                    autofix_result = {"commit_url": fix_commit["commit_url"], "pr_url": fix_pr["pr_url"], "branch": fix_commit["branch"]}
-                    try:
-                        post_jira_comment(issue_key, f"Opened PR {fix_pr['pr_url']} with automated fixes extracted from description.")
-                    except Exception:
-                        pass
-                except Exception:
-                    # Non-fatal: continue without autofix
-                    autofix_result = {"skipped": True}
-
-        # Automatic Jira transition when PR(s) are opened
+        # ---------------------------------------------------------
+        # 1. Fetch Jira Issue Context
+        # ---------------------------------------------------------
+        summary = f"Task for {issue_key}"
+        description = ""
         if issue_key:
             try:
+                details = get_issue_details(issue_key)
+                summary = details.get("summary") or summary
+                description = details.get("description") or ""
+            except Exception as e:
+                print(f"Warning: Failed to fetch Jira details: {e}")
+
+        owner, repo = repository.split("/")
+
+        # ---------------------------------------------------------
+        # 2. Trigger Copilot Agent (Native)
+        # ---------------------------------------------------------
+        # Create a GitHub Issue assigned to @copilot
+        from copilot_agent.lib.github import create_copilot_issue
+        copilot_issue_info = {"issue_url": "skipped", "issue_number": -1}
+        try:
+            copilot_issue_info = create_copilot_issue(owner, repo, issue_key, summary, description)
+        except Exception as e:
+            print(f"Warning: Failed to create Copilot Issue: {e}")
+
+        # ---------------------------------------------------------
+        # 3. Create CI/CD Pipeline (Standard)
+        # ---------------------------------------------------------
+        workflow_content = generate_workflow(repository, language, build_cmd, test_cmd, deploy_target)
+        branch = f"add-ci-{repo}-{int(time.time())}-{uuid.uuid4().hex[:8]}"
+        commit_info = commit_workflow(owner, repo, branch, workflow_content)
+        pr_info = create_pull_request(owner, repo, commit_info["branch"], issue_key)
+
+        # ---------------------------------------------------------
+        # 4. Feedback to Jira
+        # ---------------------------------------------------------
+        if issue_key:
+            comment_body = (
+                f"✅ **Automated Actions Triggered**\n\n"
+                f"1. **Copilot Agent** has been assigned to fix the code.\n"
+                f"   - Tracking Issue: [{owner}/{repo}#{copilot_issue_info['issue_number']}]({copilot_issue_info['issue_url']})\n"
+                f"   - *Copilot should pick this up and open a fix PR shortly.*\n\n"
+                f"2. **CI/CD Pipeline** has been created.\n"
+                f"   - File: `.github/workflows/{repo}-ci.yml`\n"
+                f"   - PR: [{owner}/{repo}#{pr_info['pr_number']}]({pr_info['pr_url']})"
+            )
+            try:
+                post_jira_comment(issue_key, comment_body)
                 transition_issue(issue_key, "In Review")
             except Exception:
                 pass
 
-        # Post back to Jira (only if issue_key provided); non-fatal if it fails
-        if issue_key:
-            try:
-                post_jira_comment(issue_key, (
-                    f"✅ Workflow created and PR opened.\n"
-                    f"File: .github/workflows/{repo}-ci.yml\n"
-                    f"Commit: {commit_info['commit_url']}\n"
-                    f"PR: {pr_info['pr_url']}"
-                ))
-            except Exception:
-                pass
         return {
             "status": "success",
-            "commit_url": commit_info["commit_url"],
-            "pr_url": pr_info["pr_url"],
-            "autofix": autofix_result or {"message": "No valid auto-fix instructions found in Jira description."}
+            "copilot_issue": copilot_issue_info.get("issue_url"),
+            "ci_pr": pr_info["pr_url"]
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
