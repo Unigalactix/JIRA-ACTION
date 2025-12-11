@@ -3,6 +3,7 @@ import base64
 import time
 from github import Github, InputGitTreeElement, GithubException
 from copilot_agent.lib.logger import setup_logger
+from copilot_agent.lib.jira import post_jira_comment
 
 logger = setup_logger("github")
 
@@ -23,7 +24,7 @@ def get_repo(owner, repo_name):
         logger.error(f"Failed to get repository {owner}/{repo_name}: {e}")
         raise
 
-def commit_workflow(owner, repo, branch, workflow_content):
+def commit_workflow(owner, repo, branch, workflow_content, issue_key=None):
     repository = get_repo(owner, repo)
 
     # Get main branch reference
@@ -42,6 +43,11 @@ def commit_workflow(owner, repo, branch, workflow_content):
     except GithubException:
         branch_ref = repository.create_git_ref(ref=f"refs/heads/{branch}", sha=sha)
         logger.info(f"Created new branch: {branch}")
+        if issue_key:
+            try:
+                post_jira_comment(issue_key, f"Created new branch: {branch}")
+            except Exception:
+                pass
 
     # Create blob and commit
     path = f".github/workflows/{repo}-ci.yml"
@@ -55,6 +61,11 @@ def commit_workflow(owner, repo, branch, workflow_content):
     logger.info(f"Created commit: {commit.sha}")
     branch_ref.edit(sha=commit.sha)
     logger.info(f"Updated branch '{branch}' to commit {commit.sha}")
+    if issue_key:
+        try:
+            post_jira_comment(issue_key, f"Committed workflow to {branch}", link_text="Commit", link_url=commit.html_url)
+        except Exception:
+            pass
 
     return {"commit_url": commit.html_url, "branch": branch}
 
@@ -75,6 +86,11 @@ def create_pull_request(owner, repo, branch, issue_key=None):
         base="main",
     )
     logger.info(f"Created PR #{pr.number}: {pr.html_url}")
+    if issue_key:
+         try:
+            post_jira_comment(issue_key, f"Created Pull Request #{pr.number}", link_text="View PR", link_url=pr.html_url)
+         except Exception:
+            pass
     return {"pr_url": pr.html_url, "pr_number": pr.number}
 
 
@@ -97,7 +113,7 @@ def create_copilot_issue(owner, repo, issue_key, summary, description):
     return {"issue_url": issue.html_url, "issue_number": issue.number}
 
 
-def apply_text_patches(owner, repo, base_branch, new_branch, changes):
+def apply_text_patches(owner, repo, base_branch, new_branch, changes, issue_key=None):
     """Apply simple text replacements to files and commit on a new branch.
 
     changes: list of {"path": "relative/file/path", "find": "text", "replace": "text"}
@@ -114,6 +130,11 @@ def apply_text_patches(owner, repo, base_branch, new_branch, changes):
     except GithubException:
         branch_ref = repository.create_git_ref(ref=f"refs/heads/{new_branch}", sha=base_sha)
         logger.info(f"Created new branch: {new_branch}")
+        if issue_key:
+            try:
+                post_jira_comment(issue_key, f"Created new branch for autofix: {new_branch}")
+            except Exception:
+                pass
 
     # Prepare blobs and tree elements for changed files
     elements = []
@@ -141,14 +162,17 @@ def apply_text_patches(owner, repo, base_branch, new_branch, changes):
     logger.info(f"Created commit: {commit.sha}")
     branch_ref.edit(sha=commit.sha)
     logger.info(f"Committed workflow to {new_branch}")
+    if issue_key:
+        try:
+            post_jira_comment(issue_key, f"Committed patches to {new_branch}", link_text="Commit", link_url=commit.html_url)
+        except Exception:
+            pass
     return {"commit_url": commit.html_url, "branch": new_branch}
 
 
 def post_pr_comment(owner, repo, pr_number, body):
     """Post a comment on a Pull Request (Issue)."""
-        raise RuntimeError("GITHUB_TOKEN or GHUB_TOKEN environment variable is not set")
-
-    g = Github(token)
+    g = _get_github_instance()
     repository = g.get_repo(f"{owner}/{repo}")
     issue = repository.get_issue(pr_number)
     comment = issue.create_comment(body)

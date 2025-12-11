@@ -84,7 +84,7 @@ async def webhook(req: Request):
 
         workflow_content = generate_workflow(repository, language, build_cmd, test_cmd, deploy_target)
         branch = f"add-ci-{repo}-{int(time.time())}-{uuid.uuid4().hex[:8]}"
-        commit_info = commit_workflow(owner, repo, branch, workflow_content)
+        commit_info = commit_workflow(owner, repo, branch, workflow_content, issue_key=issue_key)
         pr_info = create_pull_request(owner, repo, commit_info["branch"], issue_key)
 
         # ---------------------------------------------------------
@@ -176,7 +176,7 @@ async def generate_pipeline(req: Request):
         # ---------------------------------------------------------
         workflow_content = generate_workflow(repository, language, build_cmd, test_cmd, deploy_target)
         branch = f"add-ci-{repo}-{int(time.time())}-{uuid.uuid4().hex[:8]}"
-        commit_info = commit_workflow(owner, repo, branch, workflow_content)
+        commit_info = commit_workflow(owner, repo, branch, workflow_content, issue_key=issue_key)
         pr_info = create_pull_request(owner, repo, commit_info["branch"], issue_key)
         logger.info(f"Generated workflow, committed to {commit_info['commit_url']}, and opened PR {pr_info['pr_url']}")
 
@@ -360,7 +360,7 @@ async def autofix(req: Request):
 
     branch = f"autofix-{issue_key.lower()}-{uuid.uuid4().hex[:8]}"
     try:
-        commit_info = apply_text_patches(owner, repo, base_branch, branch, changes)
+        commit_info = apply_text_patches(owner, repo, base_branch, branch, changes, issue_key=issue_key)
         pr = create_pull_request(owner, repo, commit_info["branch"], issue_key)
         logger.info(f"Applied text patches and opened PR {pr['pr_url']} for autofix {issue_key}")
         
@@ -453,7 +453,7 @@ if __name__ == "__main__":
                 continue
             branch = f"autofix-{issue_key.lower()}-{uuid.uuid4().hex[:8]}"
             try:
-                commit_info = apply_text_patches(owner, repo, "main", branch, changes)
+                commit_info = apply_text_patches(owner, repo, "main", branch, changes, issue_key=issue_key)
                 pr = create_pull_request(owner, repo, commit_info["branch"], issue_key)
                 logger.info(f"Opened PR: {pr['pr_url']} for {issue_key}")
 
@@ -486,7 +486,7 @@ if __name__ == "__main__":
         )
         owner, repo = args.repository.split("/")
         branch = f"add-ci-{repo}-{int(time.time())}-{uuid.uuid4().hex[:8]}"
-        commit_info = commit_workflow(owner, repo, branch, workflow_content)
+        commit_info = commit_workflow(owner, repo, branch, workflow_content, issue_key=args.issueKey)
         pr_info = create_pull_request(owner, repo, commit_info["branch"], args.issueKey)
         target_file = f".github/workflows/{repo}-ci.yml" # Assuming a standard path for logging
         logger.info(f"Workflow file generated at: {target_file}")
@@ -539,5 +539,4 @@ if __name__ == "__main__":
                 logger.warning(f"Warning: Failed to post Jira comment for {args.issueKey}: {e}")
         logger.info(f"Commit: {commit_info['commit_url']}")
         logger.info(f"PR: {pr_info['pr_url']}")
-    except Exception as e:
-        logger.exception("Error in main execution:")
+    
