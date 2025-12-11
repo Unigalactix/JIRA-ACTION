@@ -1,42 +1,22 @@
-name: CI Workflow
+name: Event Workflow (Agent)
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
+  repository_dispatch:
+    types: [jira-webhook]
 
 jobs:
-  ci-pipeline:
+  run-agent:
     runs-on: ubuntu-latest
     steps:
-      - name: Checklist
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-
-      - name: Extract Jira Key
-        id: jira
-        uses: actions/github-script@v7
-        with:
-          script: |
-            // Try to find key in branch name or PR title
-            const branch = context.payload.pull_request.head.ref;
-            const title = context.payload.pull_request.title;
-            const regex = /[A-Z]+-\d+/;
-            const match = branch.match(regex) || title.match(regex);
-            if (match) {
-              core.setOutput('issueKey', match[0]);
-              console.log(`Found Jira Key: ${match[0]}`);
-            } else {
-              console.log("No Jira key found.");
-              core.setOutput('issueKey', '');
-            }
-
-      - name: Jira Comment - CI Started
-        if: steps.jira.outputs.issueKey != ''
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Jira Comment - Trigger
         uses: actions/github-script@v7
         env:
-          ISSUE_KEY: ${{ steps.jira.outputs.issueKey }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          ISSUE_KEY: ${{ github.event.client_payload.issueKey }}
           JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
           JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
@@ -45,14 +25,7 @@ jobs:
             const jira = require('./.github/scripts/jira.js');
             await jira({
               issueKey: process.env.ISSUE_KEY,
-              comment: `CI pipeline started for PR #${process.env.PR_NUMBER}.`,
-              baseUrl: process.env.JIRA_BASE_URL,
-              email: process.env.JIRA_USER_EMAIL,
-              token: process.env.JIRA_API_TOKEN
-            });
-            await jira({
-              issueKey: process.env.ISSUE_KEY,
-              comment: `CI checkout completed.`,
+              comment: `GitHub automation triggered for ${process.env.ISSUE_KEY}.`,
               baseUrl: process.env.JIRA_BASE_URL,
               email: process.env.JIRA_USER_EMAIL,
               token: process.env.JIRA_API_TOKEN
@@ -62,22 +35,21 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-
+          
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          
+
       - name: Setup Dotnet
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
-
-      - name: Jira Comment - Runtime Ready
-        if: steps.jira.outputs.issueKey != ''
+          
+      - name: Jira Comment - Runtime
         uses: actions/github-script@v7
         env:
-          ISSUE_KEY: ${{ steps.jira.outputs.issueKey }}
+          ISSUE_KEY: ${{ github.event.client_payload.issueKey }}
           JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
           JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
@@ -86,20 +58,16 @@ jobs:
             const jira = require('./.github/scripts/jira.js');
             await jira({
               issueKey: process.env.ISSUE_KEY,
-              comment: `CI runtime environment ready.`,
+              comment: `Runtime environment ready for Agent execution.`,
               baseUrl: process.env.JIRA_BASE_URL,
               email: process.env.JIRA_USER_EMAIL,
               token: process.env.JIRA_API_TOKEN
             });
 
-      - name: Build (.NET)
-        run: echo "Building..." # Replace with actual dotnet build
-
-      - name: Jira Comment - Build Success
-        if: steps.jira.outputs.issueKey != ''
+      - name: Jira Comment - Agent Input
         uses: actions/github-script@v7
         env:
-          ISSUE_KEY: ${{ steps.jira.outputs.issueKey }}
+          ISSUE_KEY: ${{ github.event.client_payload.issueKey }}
           JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
           JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
@@ -108,20 +76,27 @@ jobs:
             const jira = require('./.github/scripts/jira.js');
             await jira({
               issueKey: process.env.ISSUE_KEY,
-              comment: `Build completed successfully.`,
+              comment: `Agent instructions prepared from Jira input.`,
               baseUrl: process.env.JIRA_BASE_URL,
               email: process.env.JIRA_USER_EMAIL,
               token: process.env.JIRA_API_TOKEN
             });
 
-      - name: Test (.NET)
-        run: echo "Testing..." # Replace with actual dotnet test
+      - name: Run Copilot Agent (Script)
+        env:
+          ISSUE_KEY: ${{ github.event.client_payload.issueKey }}
+          REPOSITORY: ${{ github.repository }}
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: |
+          pip install requests python-dotenv
+          python copilot_agent/lib/generate.py
 
-      - name: Jira Comment - Test Success
-        if: steps.jira.outputs.issueKey != ''
+      - name: Jira Comment - Agent Done
         uses: actions/github-script@v7
         env:
-          ISSUE_KEY: ${{ steps.jira.outputs.issueKey }}
+          ISSUE_KEY: ${{ github.event.client_payload.issueKey }}
           JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
           JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
@@ -130,20 +105,26 @@ jobs:
             const jira = require('./.github/scripts/jira.js');
             await jira({
               issueKey: process.env.ISSUE_KEY,
-              comment: `All unit tests passed.`,
+              comment: `Copilot Agent processed request and generated artifacts.`,
               baseUrl: process.env.JIRA_BASE_URL,
               email: process.env.JIRA_USER_EMAIL,
               token: process.env.JIRA_API_TOKEN
             });
 
-      - name: Lint
-        run: echo "Linting..."
+      - name: Create Feature Branch
+        id: create_branch
+        run: |
+          BRANCH="feature/${{ github.event.client_payload.issueKey }}"
+          echo "BRANCH_NAME=$BRANCH" >> $GITHUB_ENV
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b $BRANCH
 
-      - name: Jira Comment - Lint Success
-        if: steps.jira.outputs.issueKey != ''
+      - name: Jira Comment - Branch Created
         uses: actions/github-script@v7
         env:
-          ISSUE_KEY: ${{ steps.jira.outputs.issueKey }}
+          ISSUE_KEY: ${{ github.event.client_payload.issueKey }}
+          BRANCH: ${{ env.BRANCH_NAME }}
           JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
           JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
@@ -152,25 +133,22 @@ jobs:
             const jira = require('./.github/scripts/jira.js');
             await jira({
               issueKey: process.env.ISSUE_KEY,
-              comment: `Lint and static analysis checks passed.`,
+              comment: `Branch created: ${process.env.BRANCH}.`,
               baseUrl: process.env.JIRA_BASE_URL,
               email: process.env.JIRA_USER_EMAIL,
               token: process.env.JIRA_API_TOKEN
             });
 
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
-        with:
-          languages: javascript # or csharp, python
+      - name: Commit and Push
+        run: |
+          git add .
+          git commit -m "Auto-generated fixes for ${{ github.event.client_payload.issueKey }}"
+          git push origin ${{ env.BRANCH_NAME }}
 
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
-
-      - name: Jira Comment - Security Success
-        if: steps.jira.outputs.issueKey != ''
+      - name: Jira Comment - Pushed
         uses: actions/github-script@v7
         env:
-          ISSUE_KEY: ${{ steps.jira.outputs.issueKey }}
+          ISSUE_KEY: ${{ github.event.client_payload.issueKey }}
           JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
           JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
@@ -179,20 +157,37 @@ jobs:
             const jira = require('./.github/scripts/jira.js');
             await jira({
               issueKey: process.env.ISSUE_KEY,
-              comment: `Security scan passed — no blocking issues.`,
+              comment: `Code updates pushed by automation bot.`,
               baseUrl: process.env.JIRA_BASE_URL,
               email: process.env.JIRA_USER_EMAIL,
               token: process.env.JIRA_API_TOKEN
             });
 
-      - name: Dependency Audit
-        run: npm audit || true # or dotnet list package --vulnerable
-
-      - name: Jira Comment - Dependency Success
-        if: steps.jira.outputs.issueKey != ''
+      - name: Create Pull Request
+        id: create_pr
         uses: actions/github-script@v7
         env:
-          ISSUE_KEY: ${{ steps.jira.outputs.issueKey }}
+          ISSUE_KEY: ${{ github.event.client_payload.issueKey }}
+          BRANCH: ${{ env.BRANCH_NAME }}
+        with:
+          script: |
+            const { repo, owner } = context.repo;
+            const pr = await github.rest.pulls.create({
+              owner,
+              repo,
+              title: `[${process.env.ISSUE_KEY}] Automated Fixes`,
+              head: process.env.BRANCH,
+              base: 'main',
+              body: `Automated PR for ${process.env.ISSUE_KEY} generated by Copilot Agent.`
+            });
+            core.setOutput('pr_url', pr.data.html_url);
+            core.setOutput('pr_number', pr.data.number);
+
+      - name: Jira Comment - PR Created
+        uses: actions/github-script@v7
+        env:
+          ISSUE_KEY: ${{ github.event.client_payload.issueKey }}
+          PR_URL: ${{ steps.create_pr.outputs.pr_url }}
           JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
           JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
@@ -201,17 +196,17 @@ jobs:
             const jira = require('./.github/scripts/jira.js');
             await jira({
               issueKey: process.env.ISSUE_KEY,
-              comment: `Dependency scan OK — no critical alerts.`,
+              comment: `Pull Request created: ${process.env.PR_URL}.`,
               baseUrl: process.env.JIRA_BASE_URL,
               email: process.env.JIRA_USER_EMAIL,
               token: process.env.JIRA_API_TOKEN
             });
 
-      - name: Jira Comment - CI Summary
-        if: always() && steps.jira.outputs.issueKey != ''
+      - name: Jira Comment - Mid Summary
         uses: actions/github-script@v7
         env:
-          ISSUE_KEY: ${{ steps.jira.outputs.issueKey }}
+          ISSUE_KEY: ${{ github.event.client_payload.issueKey }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
           JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
@@ -220,7 +215,26 @@ jobs:
             const jira = require('./.github/scripts/jira.js');
             await jira({
               issueKey: process.env.ISSUE_KEY,
-              comment: `CI completed — Build/Test/Security: All Passed.`,
+              comment: `Progress update available. Logs: ${process.env.RUN_URL}`,
+              baseUrl: process.env.JIRA_BASE_URL,
+              email: process.env.JIRA_USER_EMAIL,
+              token: process.env.JIRA_API_TOKEN
+            });
+
+      - name: Jira Comment - Final Summary
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          ISSUE_KEY: ${{ github.event.client_payload.issueKey }}
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        with:
+          script: |
+            const jira = require('./.github/scripts/jira.js');
+            await jira({
+              issueKey: process.env.ISSUE_KEY,
+              comment: `Agent summary posted — code, branch, and PR ready.`,
               baseUrl: process.env.JIRA_BASE_URL,
               email: process.env.JIRA_USER_EMAIL,
               token: process.env.JIRA_API_TOKEN

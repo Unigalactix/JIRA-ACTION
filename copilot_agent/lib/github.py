@@ -129,3 +129,16 @@ def apply_text_patches(owner, repo, base_branch, new_branch, changes):
     branch_ref.edit(commit.sha)
 
     return {"commit_url": f"https://github.com/{owner}/{repo}/commit/{commit.sha}", "branch": new_branch}
+
+
+def post_pr_comment(owner, repo, pr_number, body):
+    """Post a comment on a Pull Request (Issue)."""
+    token = os.getenv("GHUB_TOKEN") or os.getenv("GITHUB_TOKEN")
+    if not token:
+        raise RuntimeError("GITHUB_TOKEN or GHUB_TOKEN environment variable is not set")
+
+    g = Github(token)
+    repository = g.get_repo(f"{owner}/{repo}")
+    issue = repository.get_issue(pr_number)
+    comment = issue.create_comment(body)
+    return {"comment_url": comment.html_url, "id": comment.id}

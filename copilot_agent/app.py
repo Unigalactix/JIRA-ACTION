@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request
 from copilot_agent.lib.workflow_factory import generate_workflow
-from copilot_agent.lib.github import commit_workflow, create_pull_request, apply_text_patches
+from copilot_agent.lib.github import commit_workflow, create_pull_request, apply_text_patches, post_pr_comment
 from copilot_agent.lib.jira import post_jira_comment, transition_issue, get_issue_details, search_issues
 import os
 import time
@@ -64,6 +64,20 @@ async def webhook(req: Request):
         branch = f"add-ci-{repo}-{int(time.time())}-{uuid.uuid4().hex[:8]}"
         commit_info = commit_workflow(owner, repo, branch, workflow_content)
         pr_info = create_pull_request(owner, repo, commit_info["branch"], issue_key)
+
+        # ---------------------------------------------------------
+        # 3.5 Trigger Copilot via PR Comment
+        # ---------------------------------------------------------
+        try:
+            copilot_prompt = (
+                f"@copilot please review this PR and fix any issues.\n\n"
+                f"**Task**: {summary}\n"
+                f"**Description**: {description}\n"
+                f"**Jira Issue**: {issue_key}"
+            )
+            post_pr_comment(owner, repo, pr_info["pr_number"], copilot_prompt)
+        except Exception as e:
+            print(f"Warning: Failed to post Copilot comment on PR: {e}")
 
         # ---------------------------------------------------------
         # 4. Feedback to Jira
@@ -207,6 +221,19 @@ async def autofix(req: Request):
     try:
         commit_info = apply_text_patches(owner, repo, base_branch, branch, changes)
         pr = create_pull_request(owner, repo, commit_info["branch"], issue_key)
+        
+        # Trigger Copilot via PR Comment
+        try:
+            copilot_prompt = (
+                f"@copilot please review this auto-fix PR and make further improvements.\n\n"
+                f"**Task**: {summary}\n"
+                f"**Description**: {description}\n"
+                f"**Jira Issue**: {issue_key}"
+            )
+            post_pr_comment(owner, repo, pr["pr_number"], copilot_prompt)
+        except Exception as e:
+            print(f"Warning: Failed to post Copilot comment on PR: {e}")
+
         try:
             post_jira_comment(issue_key, f"Opened PR {pr['pr_url']} with automated fixes: {summary}")
         except Exception:
@@ -277,6 +304,19 @@ if __name__ == "__main__":
                 commit_info = apply_text_patches(owner, repo, "main", branch, changes)
                 pr = create_pull_request(owner, repo, commit_info["branch"], issue_key)
                 print(f"Opened PR: {pr['pr_url']} for {issue_key}")
+
+                # Trigger Copilot via PR Comment
+                try:
+                    copilot_prompt = (
+                        f"@copilot please review this auto-fix PR and make further improvements.\n\n"
+                        f"**Task**: {summary}\n"
+                        f"**Description**: {description}\n"
+                        f"**Jira Issue**: {issue_key}"
+                    )
+                    post_pr_comment(owner, repo, pr["pr_number"], copilot_prompt)
+                except Exception as e:
+                    print(f"Warning: Failed to post Copilot comment: {e}")
+
                 try:
                     post_jira_comment(issue_key, f"Opened PR {pr['pr_url']} with automated fixes: {summary}")
                     transition_issue(issue_key, "In Review")
@@ -295,6 +335,29 @@ if __name__ == "__main__":
         pr_info = create_pull_request(owner, repo, commit_info["branch"], args.issueKey)
         if args.issueKey:
             try:
+                # ---------------------------------------------------------
+                # Trigger Copilot via PR Comment
+                # ---------------------------------------------------------
+                summary = f"Task for {args.issueKey}"
+                description = ""
+                try:
+                    details = get_issue_details(args.issueKey)
+                    summary = details.get("summary") or summary
+                    description = details.get("description") or ""
+                except Exception:
+                    pass
+
+                copilot_prompt = (
+                    f"@copilot please review this PR and fix any issues.\n\n"
+                    f"**Task**: {summary}\n"
+                    f"**Description**: {description}\n"
+                    f"**Jira Issue**: {args.issueKey}"
+                )
+                try:
+                    post_pr_comment(owner, repo, pr_info["pr_number"], copilot_prompt)
+                except Exception as e:
+                    print(f"Warning: Failed to post Copilot comment: {e}")
+                
                 post_jira_comment(
                     args.issueKey,
                     (
