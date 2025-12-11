@@ -144,17 +144,8 @@ jobs:
             const jira = require('./.github/scripts/jira.js');
             await jira({
               issueKey: process.env.ISSUE_KEY,
-              comment: `Deployment finished — all pipeline checks passed.`,
-              baseUrl: process.env.JIRA_BASE_URL,
-              email: process.env.JIRA_USER_EMAIL,
-              token: process.env.JIRA_API_TOKEN
-            });
-
-            // Transition to DONE (Conceptual helper usage, logic to be added to jira.js if needed or separate call)
-            // Assuming simplified transition by comment only for now as requested by user text
-            await jira({
-              issueKey: process.env.ISSUE_KEY,
-              comment: `Jira issue transitioned to Done.`,
+              comment: `Deployment finished — all pipeline checks passed. Transitioning issue to Done.`,
+              transition: "Done",
               baseUrl: process.env.JIRA_BASE_URL,
               email: process.env.JIRA_USER_EMAIL,
               token: process.env.JIRA_API_TOKEN

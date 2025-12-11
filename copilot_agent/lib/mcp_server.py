@@ -1,4 +1,3 @@
-```python
 from mcp.server.fastmcp import FastMCP
 import subprocess
 import os

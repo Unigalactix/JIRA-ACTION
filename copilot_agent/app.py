@@ -1,4 +1,3 @@
-```python
 from fastapi import FastAPI, Request
 from copilot_agent.lib.workflow_factory import generate_workflow
 from copilot_agent.lib.github import commit_workflow, create_pull_request, apply_text_patches, post_pr_comment, create_copilot_issue
@@ -542,4 +541,3 @@ if __name__ == "__main__":
         logger.info(f"PR: {pr_info['pr_url']}")
     except Exception as e:
         logger.exception("Error in main execution:")
-```
