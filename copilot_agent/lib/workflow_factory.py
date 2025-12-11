@@ -33,6 +33,8 @@ jobs:
           restore-keys: ${{ runner.os }}-node-
       - name: Install dependencies
         run: npm ci
+      - name: Security Scan
+        run: npm audit
       - name: Build
         run: {build_cmd}
       - name: Test
@@ -52,6 +54,10 @@ jobs:
           restore-keys: ${{ runner.os }}-pip-
       - name: Install dependencies
         run: pip install -r requirements.txt
+      - name: Security Scan
+        run: |
+          pip install bandit
+          bandit -r .
       - name: Build
         run: {build_cmd}
       - name: Test
@@ -65,6 +71,8 @@ jobs:
           dotnet-version: '8.0.x'
       - name: Restore
         run: dotnet restore
+      - name: Security Scan
+        run: dotnet list package --vulnerable
       - name: Build
         run: {build_cmd}
       - name: Test

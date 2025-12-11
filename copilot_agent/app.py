@@ -1,5 +1,7 @@
 from fastapi import FastAPI, Request
 from copilot_agent.lib.workflow_factory import generate_workflow
+from copilot_agent.lib.config_helper import generate_vs_code_config
+from pathlib import Path
 from copilot_agent.lib.github import commit_workflow, create_pull_request, apply_text_patches, post_pr_comment, create_copilot_issue
 from copilot_agent.lib.jira import post_jira_comment, transition_issue, get_issue_details, search_issues
 from copilot_agent.lib.logger import setup_logger
@@ -19,6 +21,18 @@ app = FastAPI()
 @app.on_event("startup")
 def startup_event():
     logger.info("Starting Copilot Agent...")
+    
+    # Auto-generate MCP Config for visibility
+    try:
+        root_dir = Path(__file__).parent.parent
+        config = generate_vs_code_config(root_dir)
+        if "error" not in config:
+            logger.info("----------------------------------------------------------------")
+            logger.info("MCP CONFIGURATION (Copy to VS Code settings.json):")
+            logger.info(json.dumps(config, indent=2))
+            logger.info("----------------------------------------------------------------")
+    except Exception as e:
+        logger.warning(f"Failed to generate MCP config on startup: {e}")
 
 @app.get("/health")
 def health():
