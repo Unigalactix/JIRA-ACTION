@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request
 from copilot_agent.lib.workflow_factory import generate_workflow
-from copilot_agent.lib.config_helper import generate_vs_code_config
+from copilot_agent.lib.config_helper import generate_vs_code_config, mask_config
 from pathlib import Path
 from copilot_agent.lib.github import commit_workflow, create_pull_request, apply_text_patches, post_pr_comment, create_copilot_issue
 from copilot_agent.lib.jira import post_jira_comment, transition_issue, get_issue_details, search_issues
@@ -27,9 +27,11 @@ def startup_event():
         root_dir = Path(__file__).parent.parent
         config = generate_vs_code_config(root_dir)
         if "error" not in config:
+            safe_config = mask_config(config)
             logger.info("----------------------------------------------------------------")
             logger.info("MCP CONFIGURATION (Copy to VS Code settings.json):")
-            logger.info(json.dumps(config, indent=2))
+            logger.info("(Secrets are masked in logs. Run scripts/generate_mcp_config.py to see full values)")
+            logger.info(json.dumps(safe_config, indent=2))
             logger.info("----------------------------------------------------------------")
     except Exception as e:
         logger.warning(f"Failed to generate MCP config on startup: {e}")

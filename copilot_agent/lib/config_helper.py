@@ -40,3 +40,21 @@ def generate_vs_code_config(root_dir: Path) -> dict:
             # else leave as is or set to empty? keeping as is allows user to see what's missing
     
     return config
+
+def mask_config(config: dict) -> dict:
+    """Returns a copy of the config with sensitive values masked."""
+    import copy
+    masked = copy.deepcopy(config)
+    
+    # Masking rules: known env vars in the atlassian block
+    atlassian_env = masked.get("mcpServers", {}).get("atlassian", {}).get("env", {})
+    if atlassian_env:
+        for key in ["JIRA_API_TOKEN", "JIRA_USER_EMAIL"]: 
+            if key in atlassian_env and atlassian_env[key]:
+                val = atlassian_env[key]
+                if len(val) > 4:
+                    atlassian_env[key] = f"{val[:2]}...{val[-2:]}"
+                else:
+                    atlassian_env[key] = "***"
+    
+    return masked
