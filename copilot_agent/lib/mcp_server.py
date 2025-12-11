@@ -1,9 +1,17 @@
+```python
 from mcp.server.fastmcp import FastMCP
 import subprocess
 import os
+import requests
+from copilot_agent.lib.logger import setup_logger
+
+logger = setup_logger("mcp_server")
 
 # Initialize FastMCP server
 mcp = FastMCP("my-mcp-server")
+
+# Security: Whitelist allowed paths
+ALLOWED_REPOS = [p.strip() for p in os.environ.get("ALLOWED_REPOS", "").split(",") if p.strip()]
 
 @mcp.tool()
 def agent_tests(repo_path: str) -> dict:
@@ -15,33 +23,15 @@ def agent_tests(repo_path: str) -> dict:
     # ---------------------------------------------------------
     # SECURITY: Whitelist Enforcement
     # ---------------------------------------------------------
-    allowed_repos_env = os.environ.get("ALLOWED_REPOS", "")
-    if not allowed_repos_env:
-        # Secure by default: if no whitelist is set, allow nothing.
+    normalized_repo = os.path.normpath(repo_path)
+    if not any(normalized_repo.startswith(os.path.normpath(allowed.strip())) for allowed in ALLOWED_REPOS if allowed.strip()):
+        logger.warning(f"Access denied for path: {repo_path}")
         return {
-            "status": "PERMISSION_DENIED",
-            "details": "Server configuration error: ALLOWED_REPOS environment variable is not set. No paths are authorized."
+            "status": "PERMISSION_DENIED", 
+            "error": f"Access to {repo_path} is not allowed. Allowed paths: {ALLOWED_REPOS}"
         }
-
-    allowed_paths = [p.strip().lower() for p in allowed_repos_env.split(",") if p.strip()]
-    normalized_target = os.path.abspath(repo_path).lower()
-
-    is_allowed = False
-    for safe_path in allowed_paths:
-        # Check if the target is the safe path or a subdirectory of it
-        # We add os.sep to ensure /foo-bar doesn't match /foo
-        safe_path_abs = os.path.abspath(safe_path).lower()
-        if normalized_target == safe_path_abs or normalized_target.startswith(safe_path_abs + os.sep):
-            is_allowed = True
-            print(f"[AUDIT] Access GRANTED for path: {repo_path}")
-            break
     
-    if not is_allowed:
-        print(f"[AUDIT] Access DENIED for path: {repo_path}")
-        return {
-            "status": "PERMISSION_DENIED",
-            "details": f"Path '{repo_path}' is not in the ALLOWED_REPOS verify list."
-        }
+    logger.info(f"Running agent tests on: {repo_path}")
 
     if not os.path.exists(repo_path):
         return {
@@ -114,29 +104,16 @@ def setup_pages(repo_path: str, project_type: str = "html") -> dict:
     # ---------------------------------------------------------
     # SECURITY: Whitelist Enforcement
     # ---------------------------------------------------------
-    allowed_repos_env = os.environ.get("ALLOWED_REPOS", "")
-    if not allowed_repos_env:
-         return {
-            "status": "PERMISSION_DENIED",
-            "details": "Server configuration error: ALLOWED_REPOS environment variable is not set."
-        }
-
-    allowed_paths = [p.strip().lower() for p in allowed_repos_env.split(",") if p.strip()]
-    normalized_target = os.path.abspath(repo_path).lower()
-    
-    is_allowed = False
-    for safe_path in allowed_paths:
-        safe_path_abs = os.path.abspath(safe_path).lower()
-        if normalized_target == safe_path_abs or normalized_target.startswith(safe_path_abs + os.sep):
-            is_allowed = True
-            break
-            
-    if not is_allowed:
+    normalized_repo = os.path.normpath(repo_path)
+    if not any(normalized_repo.startswith(os.path.normpath(allowed.strip())) for allowed in ALLOWED_REPOS if allowed.strip()):
+        logger.warning(f"Access denied for setup_pages on path: {repo_path}")
         return {
             "status": "PERMISSION_DENIED",
-            "details": f"Path '{repo_path}' is not in the ALLOWED_REPOS verify list."
+            "details": f"Access to {repo_path} is not allowed."
         }
 
+    logger.info(f"Setting up GitHub Pages {project_type} for: {repo_path}")
+    
     try:
         workflows_dir = os.path.join(repo_path, ".github", "workflows")
         os.makedirs(workflows_dir, exist_ok=True)

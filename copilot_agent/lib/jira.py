@@ -1,5 +1,9 @@
 import requests
+import json
 import os
+from copilot_agent.lib.logger import setup_logger
+
+logger = setup_logger("jira")
 
 
 def post_jira_comment(issue_key, text, link_text=None, link_url=None):
@@ -45,8 +49,10 @@ def post_jira_comment(issue_key, text, link_text=None, link_url=None):
     resp = requests.post(url, json=payload, auth=auth, headers=headers)
     try:
         resp.raise_for_status()
+        logger.info(f"Posted comment to {issue_key}: {text[:50]}...")
     except requests.HTTPError as e:
         # Surface response text for easier debugging
+        logger.error(f"Failed to post comment to {issue_key}: {resp.status_code} {resp.text}")
         raise requests.HTTPError(f"Jira comment failed: {resp.status_code} {resp.text}") from e
 
 
