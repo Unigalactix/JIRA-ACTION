@@ -2,7 +2,7 @@ import requests
 import os
 
 
-def post_jira_comment(issue_key, text):
+def post_jira_comment(issue_key, text, link_text=None, link_url=None):
     base_url = os.getenv('JIRA_BASE_URL')
     user_email = os.getenv('JIRA_USER_EMAIL')
     api_token = os.getenv('JIRA_API_TOKEN')
@@ -14,6 +14,20 @@ def post_jira_comment(issue_key, text):
     auth = (user_email, api_token)
     headers = {"Content-Type": "application/json"}
 
+    # Construct ADF paragraph content
+    paragraph_content = [{"type": "text", "text": text}]
+    
+    if link_text and link_url:
+        # Add a space before the link if text exists
+        if text:
+            paragraph_content.append({"type": "text", "text": " "})
+        
+        paragraph_content.append({
+            "type": "text", 
+            "text": link_text,
+            "marks": [{"type": "link", "attrs": {"href": link_url}}]
+        })
+
     # Use Atlassian Document Format to avoid 400s on strict Jira setups
     payload = {
         "body": {
@@ -22,7 +36,7 @@ def post_jira_comment(issue_key, text):
             "content": [
                 {
                     "type": "paragraph",
-                    "content": [{"type": "text", "text": text}]
+                    "content": paragraph_content
                 }
             ]
         }

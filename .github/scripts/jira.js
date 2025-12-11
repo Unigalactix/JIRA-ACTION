@@ -11,6 +11,37 @@ module.exports = async ({ issueKey, comment, baseUrl, email, token }) => {
     }
 
     const auth = Buffer.from(`${email}:${token}`).toString('base64');
+
+    // Parse Markdown Links [text](url)
+    const contentNodes = [];
+    const regex = /\[(.*?)\]\((.*?)\)/g;
+    let lastIndex = 0;
+    let match;
+
+    while ((match = regex.exec(comment)) !== null) {
+        // Add text before the link
+        if (match.index > lastIndex) {
+            contentNodes.push({
+                type: "text",
+                text: comment.substring(lastIndex, match.index)
+            });
+        }
+        // Add the link
+        contentNodes.push({
+            type: "text",
+            text: match[1],
+            marks: [{ type: "link", attrs: { href: match[2] } }]
+        });
+        lastIndex = regex.lastIndex;
+    }
+    // Add remaining text
+    if (lastIndex < comment.length) {
+        contentNodes.push({
+            type: "text",
+            text: comment.substring(lastIndex)
+        });
+    }
+
     const data = JSON.stringify({
         body: {
             type: "doc",
@@ -18,12 +49,7 @@ module.exports = async ({ issueKey, comment, baseUrl, email, token }) => {
             content: [
                 {
                     type: "paragraph",
-                    content: [
-                        {
-                            type: "text",
-                            text: comment
-                        }
-                    ]
+                    content: contentNodes
                 }
             ]
         }
@@ -39,7 +65,7 @@ module.exports = async ({ issueKey, comment, baseUrl, email, token }) => {
         headers: {
             'Authorization': `Basic ${auth}`,
             'Content-Type': 'application/json',
-            'Content-Length': data.length
+            'Content-Length': Buffer.byteLength(data)
         }
     };
 

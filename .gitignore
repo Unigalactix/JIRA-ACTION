@@ -27,3 +27,7 @@ node_modules/
 
 # Project planning notes
 NEXSTEPS
+
+# Markdown (Ignore all except README)
+*.md
+!README.md

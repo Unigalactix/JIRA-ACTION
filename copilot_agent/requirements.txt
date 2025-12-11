@@ -3,3 +3,8 @@ uvicorn
 requests
 PyGithub
 python-dotenv
+
+mcp
+flake8
+bandit
+pytest

@@ -60,6 +60,18 @@ async def webhook(req: Request):
         # ---------------------------------------------------------
         # 3. Create CI/CD Pipeline (Standard)
         # ---------------------------------------------------------
+        # NOTIFY: Copilot assigned
+        if issue_key and copilot_issue_info.get("issue_url") != "skipped":
+            try:
+                post_jira_comment(
+                    issue_key, 
+                    "Copilot Agent has been assigned to fix the code.",
+                    link_text="Tracking Issue",
+                    link_url=copilot_issue_info["issue_url"]
+                )
+            except Exception:
+                pass
+
         workflow_content = generate_workflow(repository, language, build_cmd, test_cmd, deploy_target)
         branch = f"add-ci-{repo}-{int(time.time())}-{uuid.uuid4().hex[:8]}"
         commit_info = commit_workflow(owner, repo, branch, workflow_content)
@@ -80,20 +92,28 @@ async def webhook(req: Request):
             print(f"Warning: Failed to post Copilot comment on PR: {e}")
 
         # ---------------------------------------------------------
-        # 4. Feedback to Jira
+        # 4. Feedback to Jira - Granular Updates
         # ---------------------------------------------------------
         if issue_key:
-            comment_body = (
-                f"✅ **Automated Actions Triggered**\n\n"
-                f"1. **Copilot Agent** has been assigned to fix the code.\n"
-                f"   - Tracking Issue: [{owner}/{repo}#{copilot_issue_info['issue_number']}]({copilot_issue_info['issue_url']})\n"
-                f"   - *Copilot should pick this up and open a fix PR shortly.*\n\n"
-                f"2. **CI/CD Pipeline** has been created.\n"
-                f"   - File: `.github/workflows/{repo}-ci.yml`\n"
-                f"   - PR: [{owner}/{repo}#{pr_info['pr_number']}]({pr_info['pr_url']})"
-            )
+            # NOTIFY: CI Created
             try:
-                post_jira_comment(issue_key, comment_body)
+                post_jira_comment(
+                    issue_key, 
+                    f"CI/CD Pipeline created at {repo}-ci.yml.",
+                    link_text="Commit",
+                    link_url=commit_info["commit_url"]
+                )
+            except Exception:
+                pass
+            
+            # NOTIFY: PR Opened
+            try:
+                post_jira_comment(
+                    issue_key, 
+                    "Pull Request opened for review.",
+                    link_text="View PR",
+                    link_url=pr_info["pr_url"]
+                )
                 transition_issue(issue_key, "In Review")
             except Exception:
                 pass
@@ -235,7 +255,12 @@ async def autofix(req: Request):
             print(f"Warning: Failed to post Copilot comment on PR: {e}")
 
         try:
-            post_jira_comment(issue_key, f"Opened PR {pr['pr_url']} with automated fixes: {summary}")
+            post_jira_comment(
+                issue_key, 
+                f"Opened PR with automated fixes: {summary}",
+                link_text="View Auto-Fix PR",
+                link_url=pr["pr_url"]
+            )
         except Exception:
             pass
         return {"status": "success", "commit_url": commit_info["commit_url"], "pr_url": pr["pr_url"], "branch": commit_info["branch"]}
@@ -358,16 +383,20 @@ if __name__ == "__main__":
                 except Exception as e:
                     print(f"Warning: Failed to post Copilot comment: {e}")
                 
-                post_jira_comment(
-                    args.issueKey,
-                    (
-                        f"✅ Workflow created and PR opened.\n"
-                        f"File: .github/workflows/{repo}-ci.yml\n"
-                        f"Commit: {commit_info['commit_url']}\n"
-                        f"PR: {pr_info['pr_url']}"
-                    ),
-                )
+                # NOTIFY: Granular
                 try:
+                    post_jira_comment(
+                        args.issueKey,
+                        "Workflow created and pushed.",
+                        link_text="Commit",
+                        link_url=commit_info['commit_url']
+                    )
+                    post_jira_comment(
+                        args.issueKey,
+                        "Pull Request opened.",
+                        link_text="View PR",
+                        link_url=pr_info['pr_url']
+                    )
                     transition_issue(args.issueKey, "In Review")
                 except Exception:
                     pass

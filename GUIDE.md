@@ -108,3 +108,21 @@ Set Jira Automation webhook to: `https://<your-app>.azurewebsites.net/webhook`.
 - PR not created: check default branch is `main` and permissions
 - Jira comment missing: ensure `issueKey` was provided and Jira creds valid
 - Local errors: run with `--reload` to see stack traces; verify `.env` loaded
+
+## 14. MCP Server Setup (for Agentic Testing)
+This project includes a Model Context Protocol (MCP) server that exposes testing tools to AI agents (like Claude Desktop).
+
+### Setup
+1. Install dependencies:
+   ```powershell
+   pip install -r copilot_agent/requirements.txt
+   ```
+
+2. Run the server locally:
+   ```powershell
+   python copilot_agent/lib/mcp_server.py
+   ```
+
+### Usage
+- Configure your MCP client (e.g., Claude Desktop) to run the internal python command pointing to `copilot_agent/lib/mcp_server.py`.
+- The server exposes the `agent_tests` tool which runs `pytest`, `flake8`, and `bandit`.
