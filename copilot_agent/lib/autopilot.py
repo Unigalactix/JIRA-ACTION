@@ -118,7 +118,7 @@ class Autopilot:
                 "issueKey": issue_key,
                 "repository": repo_name,
                 "language": config["language"],
-                "deployTarget": config["deployTarget"],
+                "deployTarget": config.get("deployTarget"),
                 "buildCommand": config.get("buildCommand", "echo 'No build'"), # Defaults
                 "testCommand": config.get("testCommand", "echo 'No test'")
             }
