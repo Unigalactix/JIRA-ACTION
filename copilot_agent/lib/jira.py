@@ -170,3 +170,49 @@ def search_issues(jql: str, max_results: int = 20):
             "url": f"{base_url}/browse/{i.get('key')}"
         })
     return out
+
+def get_issue_comments(issue_key):
+    """Fetch comments for an issue."""
+    base_url = os.getenv('JIRA_BASE_URL')
+    user_email = os.getenv('JIRA_USER_EMAIL')
+    api_token = os.getenv('JIRA_API_TOKEN')
+    
+    url = f"{base_url}/rest/api/3/issue/{issue_key}/comment"
+    auth = (user_email, api_token)
+    headers = {"Accept": "application/json"}
+    
+    resp = requests.get(url, auth=auth, headers=headers)
+    try:
+        resp.raise_for_status()
+    except requests.HTTPError:
+        return []
+        
+    comments = []
+    for c in resp.json().get("comments", []):
+        # Parse body (ADF or string) - simplified text extraction
+        body = c.get("body")
+        text = ""
+        if isinstance(body, dict):
+             # Deep extract text from ADF
+             try:
+                def extract_text(node):
+                    if isinstance(node, dict):
+                        if node.get("type") == "text":
+                            return node.get("text", "")
+                        elif "content" in node:
+                            return "".join(extract_text(n) for n in node["content"])
+                    elif isinstance(node, list):
+                        return "".join(extract_text(n) for n in node)
+                    return ""
+                text = extract_text(body)
+             except:
+                text = str(body)
+        else:
+             text = str(body)
+             
+        comments.append({
+            "id": c.get("id"),
+            "author": (c.get("author") or {}).get("displayName"),
+            "body": text
+        })
+    return comments

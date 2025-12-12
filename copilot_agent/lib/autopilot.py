@@ -3,7 +3,7 @@ import json
 import asyncio
 import re
 from copilot_agent.lib.logger import setup_logger
-from copilot_agent.lib.jira import search_issues, get_issue_details, transition_issue, post_jira_comment
+from copilot_agent.lib.jira import search_issues, get_issue_details, transition_issue, post_jira_comment, get_issue_comments
 from copilot_agent.lib.github import get_repo
 from github import GithubException
 
@@ -22,6 +22,7 @@ class Autopilot:
         while self.running:
             try:
                 await self.poll_and_process()
+                await self.check_in_review_tickets()
             except Exception as e:
                 logger.error(f"Autopilot loop error: {e}")
             
@@ -175,3 +176,59 @@ class Autopilot:
                      logger.info(f"Using Global DEFAULT_REPO: {config['repository']}")
         
         return config
+
+    async def check_in_review_tickets(self):
+        """Watchdog: Check status of tickets in 'In Review'."""
+        try:
+            # Find tickets in 'In Review'
+            project_keys_env = os.getenv("JIRA_PROJECT_KEYS")
+            jql = ""
+            if project_keys_env and project_keys_env.upper() != "ALL":
+                project_keys = project_keys_env.split(",")
+                projects_jql = ",".join([f'"{k.strip()}"' for k in project_keys if k.strip()])
+                jql = f'project in ({projects_jql}) AND status = "In Review"'
+            else:
+                 jql = 'status = "In Review"'
+
+            issues = search_issues(jql, max_results=20)
+            if not issues:
+                return
+
+            for issue in issues:
+                await self.check_ticket_status(issue["key"])
+                
+        except Exception as e:
+            logger.warning(f"Watchdog error: {e}")
+
+    async def check_ticket_status(self, issue_key):
+        """Check if linked PR is merged."""
+        try:
+            comments = get_issue_comments(issue_key)
+            pr_url = None
+            
+            # Find PR URL in comments
+            # Looking for "View PR" link or similar
+            for c in reversed(comments):
+                # Simple regex or string find
+                match = re.search(r'https://github.com/([^/]+)/([^/]+)/pull/(\d+)', c["body"])
+                if match:
+                    pr_url = match.group(0)
+                    owner, repo, pr_number = match.group(1), match.group(2), match.group(3)
+                    
+                    # check status
+                    gh_repo = get_repo(owner, repo)
+                    pr = gh_repo.get_pull(int(pr_number))
+                    
+                    if pr.merged:
+                        logger.info(f"Watchdog: PR {pr_number} for {issue_key} is MERGED. Transitioning to Done.")
+                        post_jira_comment(issue_key, f"Pull Request #{pr_number} merged! Task complete.")
+                        transition_issue(issue_key, "Done")
+                    elif pr.state == 'closed':
+                        logger.info(f"Watchdog: PR {pr_number} for {issue_key} is CLOSED but NOT merged.")
+                        # Optional: Transition back to To Do?
+                    else:
+                        logger.debug(f"Watchdog: PR {pr_number} for {issue_key} is {pr.state}.")
+                    return # Found latest PR, stop checking comments
+            
+        except Exception as e:
+             logger.warning(f"Watchdog failed for {issue_key}: {e}")
