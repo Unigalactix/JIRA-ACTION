@@ -269,13 +269,14 @@ async def list_issues(req: Request):
     auth = base64.b64encode(f"{email}:{api_token}".encode()).decode()
     try:
         resp = requests.post(
-            f"{base_url}/rest/api/3/search",
+            f"{base_url}/rest/api/3/search/jql",
             headers={"Authorization": f"Basic {auth}", "Content-Type": "application/json"},
-            data=json.dumps({
-                "jql": jql,
+            json={
+                "query": jql,
+                "startAt": 0,
                 "maxResults": max_results,
                 "fields": ["summary", "status", "assignee", "priority"],
-            }),
+            },
             timeout=30,
         )
         logger.info(f"Jira search request for JQL '{jql}' completed with status {resp.status_code}")
