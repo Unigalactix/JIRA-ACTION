@@ -12,6 +12,8 @@ from dotenv import load_dotenv
 import json
 import base64
 import requests
+import asyncio
+from copilot_agent.lib.autopilot import Autopilot
 
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
@@ -36,122 +38,122 @@ def startup_event():
     except Exception as e:
         logger.warning(f"Failed to generate MCP config on startup: {e}")
 
+    # Start Autopilot in background
+    autopilot = Autopilot(process_pipeline_job)
+    asyncio.create_task(autopilot.start())
+    logger.info("Autopilot background task launched.")
+
 @app.get("/health")
 def health():
     logger.info("Health check requested")
     return {"status": "ok"}
+
+async def process_pipeline_job(data: dict):
+    """
+    Shared logic to process a CI/CD job from Webhook or Autopilot.
+    """
+    issue_key = data.get("issueKey")
+    repository = data.get("repository")
+    language = data.get("language")
+    build_cmd = data.get("buildCommand")
+    test_cmd = data.get("testCommand")
+    deploy_target = data.get("deployTarget")
+
+    if not repository or not language:
+        logger.error("Missing required fields: repository, language in job payload")
+        return {"status": "error", "message": "Missing required fields: repository, language"}
+
+    # 1. Fetch Jira Issue Context
+    summary = f"Task for {issue_key}"
+    description = ""
+    if issue_key:
+        try:
+            details = get_issue_details(issue_key)
+            summary = details.get("summary") or summary
+            description = details.get("description") or ""
+        except Exception as e:
+            logger.warning(f"Failed to fetch Jira details for {issue_key}: {e}")
+
+    owner, repo = repository.split("/")
+
+    # 2. Trigger Copilot Agent (Native)
+    copilot_issue_info = {"issue_url": "skipped", "issue_number": -1}
+    try:
+        copilot_issue_info = create_copilot_issue(owner, repo, issue_key, summary, description)
+        logger.info(f"Created Copilot Issue: {copilot_issue_info['issue_url']}")
+    except Exception as e:
+        logger.error(f"Failed to create Copilot Issue: {e}")
+
+    # 3. Create CI/CD Pipeline (Standard)
+    # NOTIFY: Copilot assigned
+    if issue_key and copilot_issue_info.get("issue_url") != "skipped":
+        try:
+            post_jira_comment(
+                issue_key, 
+                "Copilot Agent has been assigned to fix the code.",
+                link_text="Tracking Issue",
+                link_url=copilot_issue_info["issue_url"]
+            )
+        except Exception as e:
+            logger.warning(f"Failed to post Jira comment about Copilot assignment for {issue_key}: {e}")
+
+    workflow_content = generate_workflow(repository, language, build_cmd, test_cmd, deploy_target)
+    branch = f"add-ci-{repo}-{int(time.time())}-{uuid.uuid4().hex[:8]}"
+    commit_info = commit_workflow(owner, repo, branch, workflow_content, issue_key=issue_key)
+    pr_info = create_pull_request(owner, repo, commit_info["branch"], issue_key)
+
+    # 3.5 Trigger Copilot via PR Comment
+    try:
+        copilot_prompt = (
+            f"@copilot please review this PR and fix any issues.\n\n"
+            f"**Task**: {summary}\n"
+            f"**Description**: {description}\n"
+            f"**Jira Issue**: {issue_key}"
+        )
+        post_pr_comment(owner, repo, pr_info["pr_number"], copilot_prompt)
+        logger.info(f"Posted Copilot comment on PR {pr_info['pr_url']}")
+    except Exception as e:
+        logger.warning(f"Failed to post Copilot comment on PR {pr_info['pr_url']}: {e}")
+
+    # 4. Feedback to Jira - Granular Updates
+    if issue_key:
+        # NOTIFY: CI Created
+        try:
+            post_jira_comment(
+                issue_key, 
+                f"CI/CD Pipeline created at {repo}-ci.yml.",
+                link_text="Commit",
+                link_url=commit_info["commit_url"]
+            )
+            logger.info(f"Posted Jira comment about CI creation for {issue_key}")
+        except Exception as e:
+            logger.warning(f"Failed to post Jira comment about CI creation for {issue_key}: {e}")
+        
+        # NOTIFY: PR Opened
+        try:
+            post_jira_comment(
+                issue_key, 
+                "Pull Request opened for review.",
+                link_text="View PR",
+                link_url=pr_info["pr_url"]
+            )
+            transition_issue(issue_key, "In Review")
+            logger.info(f"Posted Jira comment and transitioned {issue_key} to 'In Review'")
+        except Exception as e:
+            logger.warning(f"Failed to post Jira comment or transition {issue_key} for PR: {e}")
+
+    return {
+        "status": "success",
+        "copilot_issue": copilot_issue_info.get("issue_url"),
+        "ci_pr": pr_info["pr_url"]
+    }
 
 @app.post("/webhook")
 async def webhook(req: Request):
     try:
         data = await req.json()
         logger.info(f"Received webhook: {json.dumps(data)}")
-        issue_key = data.get("issueKey")
-        repository = data.get("repository")
-        language = data.get("language")
-        build_cmd = data.get("buildCommand")
-        test_cmd = data.get("testCommand")
-        deploy_target = data.get("deployTarget")
-
-        if not repository or not language:
-            logger.error("Missing required fields: repository, language in webhook payload")
-            return {"status": "error", "message": "Missing required fields: repository, language"}
-
-        # ---------------------------------------------------------
-        # 1. Fetch Jira Issue Context
-        # ---------------------------------------------------------
-        summary = f"Task for {issue_key}"
-        description = ""
-        if issue_key:
-            try:
-                details = get_issue_details(issue_key)
-                summary = details.get("summary") or summary
-                description = details.get("description") or ""
-            except Exception as e:
-                logger.warning(f"Failed to fetch Jira details for {issue_key}: {e}")
-
-        owner, repo = repository.split("/")
-
-        # ---------------------------------------------------------
-        # 2. Trigger Copilot Agent (Native)
-        # ---------------------------------------------------------
-        # Create a GitHub Issue assigned to @copilot
-        copilot_issue_info = {"issue_url": "skipped", "issue_number": -1}
-        try:
-            copilot_issue_info = create_copilot_issue(owner, repo, issue_key, summary, description)
-            logger.info(f"Created Copilot Issue: {copilot_issue_info['issue_url']}")
-        except Exception as e:
-            logger.error(f"Failed to create Copilot Issue: {e}")
-
-        # ---------------------------------------------------------
-        # 3. Create CI/CD Pipeline (Standard)
-        # ---------------------------------------------------------
-        # NOTIFY: Copilot assigned
-        if issue_key and copilot_issue_info.get("issue_url") != "skipped":
-            try:
-                post_jira_comment(
-                    issue_key, 
-                    "Copilot Agent has been assigned to fix the code.",
-                    link_text="Tracking Issue",
-                    link_url=copilot_issue_info["issue_url"]
-                )
-            except Exception as e:
-                logger.warning(f"Failed to post Jira comment about Copilot assignment for {issue_key}: {e}")
-
-        workflow_content = generate_workflow(repository, language, build_cmd, test_cmd, deploy_target)
-        branch = f"add-ci-{repo}-{int(time.time())}-{uuid.uuid4().hex[:8]}"
-        commit_info = commit_workflow(owner, repo, branch, workflow_content, issue_key=issue_key)
-        pr_info = create_pull_request(owner, repo, commit_info["branch"], issue_key)
-
-        # ---------------------------------------------------------
-        # 3.5 Trigger Copilot via PR Comment
-        # ---------------------------------------------------------
-        try:
-            copilot_prompt = (
-                f"@copilot please review this PR and fix any issues.\n\n"
-                f"**Task**: {summary}\n"
-                f"**Description**: {description}\n"
-                f"**Jira Issue**: {issue_key}"
-            )
-            post_pr_comment(owner, repo, pr_info["pr_number"], copilot_prompt)
-            logger.info(f"Posted Copilot comment on PR {pr_info['pr_url']}")
-        except Exception as e:
-            logger.warning(f"Failed to post Copilot comment on PR {pr_info['pr_url']}: {e}")
-
-        # ---------------------------------------------------------
-        # 4. Feedback to Jira - Granular Updates
-        # ---------------------------------------------------------
-        if issue_key:
-            # NOTIFY: CI Created
-            try:
-                post_jira_comment(
-                    issue_key, 
-                    f"CI/CD Pipeline created at {repo}-ci.yml.",
-                    link_text="Commit",
-                    link_url=commit_info["commit_url"]
-                )
-                logger.info(f"Posted Jira comment about CI creation for {issue_key}")
-            except Exception as e:
-                logger.warning(f"Failed to post Jira comment about CI creation for {issue_key}: {e}")
-            
-            # NOTIFY: PR Opened
-            try:
-                post_jira_comment(
-                    issue_key, 
-                    "Pull Request opened for review.",
-                    link_text="View PR",
-                    link_url=pr_info["pr_url"]
-                )
-                transition_issue(issue_key, "In Review")
-                logger.info(f"Posted Jira comment and transitioned {issue_key} to 'In Review'")
-            except Exception as e:
-                logger.warning(f"Failed to post Jira comment or transition {issue_key} for PR: {e}")
-
-        return {
-            "status": "success",
-            "copilot_issue": copilot_issue_info.get("issue_url"),
-            "ci_pr": pr_info["pr_url"]
-        }
+        return await process_pipeline_job(data)
     except Exception as e:
         logger.exception("Error in webhook processing:")
         return {"status": "error", "message": str(e)}

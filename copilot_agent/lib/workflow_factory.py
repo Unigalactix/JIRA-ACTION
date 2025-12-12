@@ -1,4 +1,11 @@
+import copilot_agent.lib.infra as infra
+
 def generate_workflow(repo, language, build_cmd, test_cmd, deploy_target):
+    # Check for GitHub Pages target
+    if deploy_target == "github-pages":
+        # infra.py expects "project_type", we map language to it
+        return infra.generate_github_pages_workflow(language)
+
     repo_name = repo.split('/')[1] if '/' in repo else repo
 
     common_header = """
