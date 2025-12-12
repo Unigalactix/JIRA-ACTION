@@ -13,7 +13,7 @@ class Autopilot:
     def __init__(self, process_callback):
         self.process_callback = process_callback
         self.running = False
-        self.interval = 120  # Default 120s
+        self.interval = 60  # Default 60s
     
     async def start(self):
         """Start the background polling loop."""

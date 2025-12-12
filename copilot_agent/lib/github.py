@@ -24,60 +24,100 @@ def get_repo(owner, repo_name):
         logger.error(f"Failed to get repository {owner}/{repo_name}: {e}")
         raise
 
-def commit_workflow(owner, repo, branch, workflow_content, issue_key=None):
+def commit_files(owner, repo, branch, files, message, issue_key=None):
+    """
+    Commit multiple files to a branch. Creates branch if it doesn't exist.
+    files: dict of { "path/to/file": "content_string" }
+    """
     repository = get_repo(owner, repo)
-
-    # Get main branch reference
-    try:
-        main_ref = repository.get_git_ref("heads/main")
-        sha = main_ref.object.sha
-        logger.info(f"Retrieved main branch SHA: {sha}")
-    except GithubException as e:
-        logger.error(f"Failed to get main branch ref: {e}")
-        raise
-
-    # Create new branch (if not exists)
+    
+    # 1. Get Base SHA (main) for new branches, or Current SHA for existing
+    parent_sha = None
     try:
         branch_ref = repository.get_git_ref(f"heads/{branch}")
-        logger.info(f"Branch '{branch}' already exists.")
+        parent_sha = branch_ref.object.sha
+        logger.info(f"Branch '{branch}' exists. Appending to {parent_sha}")
     except GithubException:
-        branch_ref = repository.create_git_ref(ref=f"refs/heads/{branch}", sha=sha)
-        logger.info(f"Created new branch: {branch}")
-        if issue_key:
-            try:
-                post_jira_comment(issue_key, f"Created new branch: {branch}")
-            except Exception:
-                pass
+        # Branch doesn't exist, get main
+        try:
+            main_ref = repository.get_git_ref("heads/main")
+            parent_sha = main_ref.object.sha
+            # Create branch immediately or wait? better to create ref at end?
+            # Creating ref at end allows 'atomic' feel, but standard git API usage often creates ref first.
+            # Let's create the ref after commit to be safe, but we need a parent SHA. 
+            logger.info(f"Branch '{branch}' new. Baselining from main {parent_sha}")
+        except GithubException as e:
+             logger.error(f"Cannot find main branch: {e}")
+             raise
 
-    # Create blob and commit
-    path = f".github/workflows/{repo}-ci.yml"
-    blob = repository.create_git_blob(workflow_content, "utf-8")
-    logger.info(f"Created blob for {path}")
-    element = InputGitTreeElement(path=path, mode="100644", type="blob", sha=blob.sha)
-    base_tree = repository.get_git_tree(sha)
-    tree = repository.create_git_tree([element], base_tree=base_tree)
-    logger.info("Created new tree for commit.")
-    commit = repository.create_git_commit("Add CI/CD workflow", tree, [repository.get_git_commit(sha)])
-    logger.info(f"Created commit: {commit.sha}")
-    branch_ref.edit(sha=commit.sha)
-    logger.info(f"Updated branch '{branch}' to commit {commit.sha}")
+    # 2. Create Blobs & Tree
+    elements = []
+    for path, content in files.items():
+        blob = repository.create_git_blob(content, "utf-8")
+        # Mode 100644 for file, 100755 for executable. Using standard file.
+        elements.append(InputGitTreeElement(path=path, mode="100644", type="blob", sha=blob.sha))
+    
+    base_tree = repository.get_git_tree(parent_sha)
+    tree = repository.create_git_tree(elements, base_tree=base_tree)
+    
+    # 3. Create Commit
+    parent_commit = repository.get_git_commit(parent_sha)
+    commit = repository.create_git_commit(message, tree, [parent_commit])
+    logger.info(f"Created commit {commit.sha}")
+
+    # 4. Update Reference
+    try:
+        # If branch existed, update it
+        if branch_ref:
+            branch_ref.edit(sha=commit.sha)
+            logger.info(f"Updated branch {branch}")
+    except UnboundLocalError:
+        # Branch didn't exist (branch_ref undefined), create it
+        try:
+            repository.create_git_ref(ref=f"refs/heads/{branch}", sha=commit.sha)
+            logger.info(f"Created branch {branch}")
+        except GithubException as e:
+            # Race condition check
+            logger.warning(f"Failed to create ref (race condition?): {e}")
+            # Try updating if it was created in mean time
+            branch_ref = repository.get_git_ref(f"heads/{branch}")
+            branch_ref.edit(sha=commit.sha)
+
+    # Notify Jira
     if issue_key:
         try:
-            post_jira_comment(issue_key, f"Committed workflow to {branch}", link_text="Commit", link_url=commit.html_url)
+            post_jira_comment(
+                issue_key, 
+                f"Committed changes to `{branch}`.\nMessage: {message}",
+                link_text="View Commit",
+                link_url=commit.html_url
+            )
         except Exception:
             pass
 
-    return {"commit_url": commit.html_url, "branch": branch}
-
+    return {"commit_url": commit.html_url, "branch": branch, "sha": commit.sha}
 
 def create_pull_request(owner, repo, branch, issue_key=None):
-    """Create a Pull Request from the branch into main.
-    Optionally include Jira issue key in the title/body.
+    """
+    Create a Pull Request or return existing one.
     """
     repo_obj = get_repo(owner, repo)
+    
+    # Check for existing PR
+    pulls = repo_obj.get_pulls(state='open', head=f"{owner}:{branch}", base='main')
+    for pr in pulls:
+        logger.info(f"Found existing PR #{pr.number} for {branch}")
+        if issue_key:
+            try:
+                # Optional: Add comment to existing PR? existing logic posted Jira comments 
+                # but maybe we don't want to spam existing PRs.
+                pass 
+            except Exception:
+                pass
+        return {"pr_url": pr.html_url, "pr_number": pr.number, "is_new": False}
 
-    title = f"Add CI/CD Pipeline for keys {issue_key}"
-    body = f"Auto-generated CI/CD pipeline for {issue_key}"
+    title = f"Copilot Fixes: {issue_key}" if issue_key else f"Copilot Automations ({branch})"
+    body = f"Automated changes by Copilot Agent.\n\nRelated Issue: {issue_key}"
 
     pr = repo_obj.create_pull(
         title=title,
@@ -86,88 +126,14 @@ def create_pull_request(owner, repo, branch, issue_key=None):
         base="main",
     )
     logger.info(f"Created PR #{pr.number}: {pr.html_url}")
+    
     if issue_key:
          try:
             post_jira_comment(issue_key, f"Created Pull Request #{pr.number}", link_text="View PR", link_url=pr.html_url)
          except Exception:
             pass
-    return {"pr_url": pr.html_url, "pr_number": pr.number}
-
-
-def create_copilot_issue(owner, repo, issue_key, summary, description):
-    """Create a GitHub Issue to trigger Copilot Agent.
-    """
-    repo_obj = get_repo(owner, repo)
-
-    title = f"[{issue_key}] Fix: {summary}"
-    description = description or "No details provided."
-    body = (
-        f"@copilot please fix this issue based on the following requirements.\n\n"
-        f"**Jira Issue**: {issue_key}\n"
-        f"**Description**:\n{description}\n"
-    )
-
-    # Create the issue
-    issue = repo_obj.create_issue(title=title, body=body, assignee="copilot")
-    logger.info(f"Created Copilot issue #{issue.number}: {title}")
-    return {"issue_url": issue.html_url, "issue_number": issue.number}
-
-
-def apply_text_patches(owner, repo, base_branch, new_branch, changes, issue_key=None):
-    """Apply simple text replacements to files and commit on a new branch.
-
-    changes: list of {"path": "relative/file/path", "find": "text", "replace": "text"}
-    """
-    repository = get_repo(owner, repo)
-
-    # Get base ref and create new branch from it if missing
-    base_ref = repository.get_git_ref(f"heads/{base_branch}")
-    base_sha = base_ref.object.sha
-    logger.info(f"Retrieved base branch '{base_branch}' SHA: {base_sha}")
-    try:
-        branch_ref = repository.get_git_ref(f"heads/{new_branch}")
-        logger.info(f"Branch '{new_branch}' already exists.")
-    except GithubException:
-        branch_ref = repository.create_git_ref(ref=f"refs/heads/{new_branch}", sha=base_sha)
-        logger.info(f"Created new branch: {new_branch}")
-        if issue_key:
-            try:
-                post_jira_comment(issue_key, f"Created new branch for autofix: {new_branch}")
-            except Exception:
-                pass
-
-    # Prepare blobs and tree elements for changed files
-    elements = []
-    for ch in changes:
-        path = ch["path"]
-        try:
-            file = repository.get_contents(path, ref=base_branch)
-            content = file.decoded_content.decode("utf-8")
-            logger.info(f"Read content from {path}")
-        except GithubException as e:
-            logger.error(f"Cannot read file '{path}' from branch {base_branch}: {e}")
-            raise RuntimeError(f"Cannot read file '{path}' from branch {base_branch}")
-
-        new_content = content.replace(ch.get("find", ""), ch.get("replace", ""))
-        blob = repository.create_git_blob(new_content, "utf-8")
-        elements.append(InputGitTreeElement(path=path, mode="100644", type="blob", sha=blob.sha))
-        logger.info(f"Prepared blob for changes in {path}")
-
-    # Create tree and commit against current branch tip
-    branch_sha = branch_ref.object.sha
-    base_tree = repository.get_git_tree(branch_sha)
-    tree = repository.create_git_tree(elements, base_tree=base_tree)
-    logger.info("Created new tree for commit.")
-    commit = repository.create_git_commit("Apply automated fixes from Jira", tree, [repository.get_git_commit(branch_sha)])
-    logger.info(f"Created commit: {commit.sha}")
-    branch_ref.edit(sha=commit.sha)
-    logger.info(f"Committed workflow to {new_branch}")
-    if issue_key:
-        try:
-            post_jira_comment(issue_key, f"Committed patches to {new_branch}", link_text="Commit", link_url=commit.html_url)
-        except Exception:
-            pass
-    return {"commit_url": commit.html_url, "branch": new_branch}
+            
+    return {"pr_url": pr.html_url, "pr_number": pr.number, "is_new": True}
 
 
 def post_pr_comment(owner, repo, pr_number, body):

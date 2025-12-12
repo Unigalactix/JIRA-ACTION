@@ -1,3 +1,56 @@
+def generate_dockerfile(language):
+    """Generate a default Dockerfile for the language."""
+    language = (language or '').lower()
+    if language in ['javascript', 'typescript', 'js', 'ts', 'node']:
+        return """FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+EXPOSE 3000
+CMD ["npm", "start"]
+"""
+    elif language in ['python', 'py']:
+        return """FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+CMD ["python", "app.py"]
+"""
+    elif language in ['dotnet', 'c#', 'csharp']:
+        return """FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+COPY *.csproj ./
+RUN dotnet restore
+COPY . .
+RUN dotnet publish -c Release -o /app/publish
+
+FROM mcr.microsoft.com/dotnet/aspnet:8.0
+WORKDIR /app
+COPY --from=build /app/publish .
+ENTRYPOINT ["dotnet", "App.dll"]
+"""
+    elif language in ['java', 'maven', 'gradle']:
+        return """FROM maven:3.8-openjdk-17 AS build
+WORKDIR /app
+COPY pom.xml .
+COPY src ./src
+RUN mvn package -DskipTests
+
+FROM eclipse-temurin:17-jre
+WORKDIR /app
+COPY --from=build /app/target/*.jar app.jar
+CMD ["java", "-jar", "app.jar"]
+"""
+    else:
+        # Generic fallback
+        return """FROM alpine:latest
+WORKDIR /app
+COPY . .
+CMD ["echo", "No run command configured"]
+"""
+
 def generate_workflow(repo, language, build_cmd, test_cmd, deploy_target):
     repo_name = repo.split('/')[1] if '/' in repo else repo
     
@@ -123,6 +176,8 @@ jobs:
         run: {real_build_cmd}
       - name: Test
         run: {real_test_cmd}
+      - name: Build Docker Image
+        run: docker build . -t app:${{{{ github.sha }}}}
 """
 
     # Prepare Artifact for Pages (if target is pages)
