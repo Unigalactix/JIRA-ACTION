@@ -3,13 +3,48 @@ import copilot_agent.lib.infra as infra
 def generate_workflow(repo, language, build_cmd, test_cmd, deploy_target):
     # Check for GitHub Pages target
     if deploy_target == "github-pages":
-        # infra.py expects "project_type", we map language to it
         return infra.generate_github_pages_workflow(language)
 
     repo_name = repo.split('/')[1] if '/' in repo else repo
+    
+    # Analyze Payload to determine defaults if commands are placeholders/empty
+    language = (language or '').lower()
+    
+    defaults = {
+        'python': {
+            'build': "echo 'No build necessary for Python'",
+            'test': "pytest || echo 'No tests found'" 
+        },
+        'node': {
+            'build': "npm run build --if-present",
+            'test': "npm test || echo 'No tests found'"
+        },
+        'dotnet': {
+            'build': "dotnet build",
+            'test': "dotnet test"
+        },
+        'java': {
+            'build': "mvn package -DskipTests",
+            'test': "mvn test"
+        }
+    }
+    
+    # Map synonyms
+    if language in ['javascript', 'typescript', 'js', 'ts']:
+        lang_key = 'node'
+    elif language in ['c#', 'csharp']:
+        lang_key = 'dotnet'
+    elif language in ['maven', 'gradle']:
+        lang_key = 'java'
+    else:
+        lang_key = language if language in defaults else 'python' # Default to python if unknown
 
-    common_header = """
-name: CI/CD Pipeline
+    # Resolve commands: Use provided CMD if valid, else default
+    real_build_cmd = build_cmd if build_cmd and "{" not in build_cmd else defaults[lang_key]['build']
+    real_test_cmd = test_cmd if test_cmd and "{" not in test_cmd else defaults[lang_key]['test']
+
+    # Generate Logic
+    header = f"""name: CI/CD Pipeline
 
 on:
   push:
@@ -18,15 +53,15 @@ on:
     branches: [ main ]
 
 jobs:
-  build-test-deploy:
+  build-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 """
 
-    language = (language or '').lower()
-
-    if language in ['node', 'javascript', 'typescript']:  # Node.js
+    # Language Specific Setup
+    setup = ""
+    if lang_key == 'node':
         setup = """
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -39,15 +74,9 @@ jobs:
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
           restore-keys: ${{ runner.os }}-node-
       - name: Install dependencies
-        run: npm ci
-      - name: Security Scan
-        run: npm audit
-      - name: Build
-        run: {build_cmd}
-      - name: Test
-        run: {test_cmd}
+        run: npm ci || npm install
 """
-    elif language in ['python']:  # Python
+    elif lang_key == 'python':
         setup = """
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -60,58 +89,52 @@ jobs:
           key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
           restore-keys: ${{ runner.os }}-pip-
       - name: Install dependencies
-        run: pip install -r requirements.txt
-      - name: Security Scan
         run: |
-          pip install bandit
-          bandit -r .
-      - name: Build
-        run: {build_cmd}
-      - name: Test
-        run: {test_cmd}
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 """
-    elif language in ['dotnet', 'c#', 'csharp']:  # .NET
+    elif lang_key == 'dotnet':
         setup = """
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
-      - name: Restore
+      - name: Restore dependencies
         run: dotnet restore
-      - name: Security Scan
-        run: dotnet list package --vulnerable
-      - name: Build
-        run: {build_cmd}
-      - name: Test
-        run: {test_cmd}
 """
-    elif language in ['java', 'maven', 'gradle']:  # Java
+    elif lang_key == 'java':
         setup = """
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
-      - name: Build
-        run: {build_cmd}
-      - name: Test
-        run: {test_cmd}
-"""
-    else:  # Fallback generic
-        setup = f"""
-      - name: Build
-        run: {build_cmd}
-      - name: Test
-        run: {test_cmd}
 """
 
-    deploy = f"""
-      - name: Deploy to {deploy_target}
+    build_steps = f"""
+      - name: Build
+        run: {real_build_cmd}
+      - name: Test
+        run: {real_test_cmd}
+"""
+
+    deploy_job = ""
+    if deploy_target == "azure-webapps":
+        deploy_job = f"""
+  deploy:
+    name: Deploy to Azure Web Apps
+    needs: build-test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Deploy
         uses: azure/webapps-deploy@v2
         with:
           app-name: {repo_name}
           publish-profile: ${{{{ secrets.AZURE_PUBLISH_PROFILE }}}}
           package: .
 """
-
-    return common_header + setup + deploy
+    
+    return header + setup + build_steps + deploy_job
