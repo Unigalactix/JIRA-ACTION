@@ -48,6 +48,10 @@ class Autopilot:
             logger.debug("No 'To Do' tickets found.")
             return
 
+        # Log summary of found tickets
+        active_keys = [i.get("key") for i in issues]
+        logger.info(f"Autopilot: Found {len(issues)} active tickets: {', '.join(active_keys)}")
+
         # Prioritize (Already sorted by JQL, but ensuring strict priority)
         # JQL "priority DESC" usually handles this, but let's be safe.
         prio_order = {"Highest": 0, "High": 1, "Medium": 2, "Low": 3, "Lowest": 4}

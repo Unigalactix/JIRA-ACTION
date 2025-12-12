@@ -23,7 +23,7 @@ We support running the official `sooperset/mcp-atlassian` server alongside our a
 2.  **Generate Configuration**
     Run the helper script to generate the config block for VS Code:
     ```bash
-    python scripts/generate_mcp_config.py
+    python temp/generate_mcp_config.py
     ```
 
 3.  **Apply Configuration**
