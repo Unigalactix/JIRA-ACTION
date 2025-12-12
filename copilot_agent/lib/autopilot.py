@@ -109,8 +109,9 @@ class Autopilot:
                     pass # Not found
                 
                 # Default to azure-webapps if still unknown
-                if not config.get("deployTarget"):
-                    config["deployTarget"] = "azure-webapps"
+                # if not config.get("deployTarget"):
+                #    config["deployTarget"] = "azure-webapps"
+                pass # Use factory default (github-pages)
 
             # 3. Execute Job
             payload = {

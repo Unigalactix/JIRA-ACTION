@@ -1,14 +1,11 @@
-import copilot_agent.lib.infra as infra
-
 def generate_workflow(repo, language, build_cmd, test_cmd, deploy_target):
-    # Check for GitHub Pages target
-    if deploy_target == "github-pages":
-        return infra.generate_github_pages_workflow(language)
-
     repo_name = repo.split('/')[1] if '/' in repo else repo
     
     # Analyze Payload to determine defaults if commands are placeholders/empty
     language = (language or '').lower()
+    
+    # Default to GitHub Pages if not specified
+    deploy_target = deploy_target or "github-pages"
     
     defaults = {
         'python': {
@@ -43,7 +40,7 @@ def generate_workflow(repo, language, build_cmd, test_cmd, deploy_target):
     real_build_cmd = build_cmd if build_cmd and "{" not in build_cmd else defaults[lang_key]['build']
     real_test_cmd = test_cmd if test_cmd and "{" not in test_cmd else defaults[lang_key]['test']
 
-    # Generate Logic
+    # Generate Header
     header = f"""name: CI/CD Pipeline
 
 on:
@@ -51,6 +48,16 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
 
 jobs:
   build-test:
@@ -118,8 +125,36 @@ jobs:
         run: {real_test_cmd}
 """
 
+    # Prepare Artifact for Pages (if target is pages)
+    upload_step = ""
+    if deploy_target == "github-pages":
+        upload_step = """
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+"""
+
+    # -------------------------------------------------------------
+    # DEPLOY JOB
+    # -------------------------------------------------------------
     deploy_job = ""
-    if deploy_target == "azure-webapps":
+    
+    if deploy_target == "github-pages":
+        deploy_job = """
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+"""
+    elif deploy_target == "azure-webapps":
         deploy_job = f"""
   deploy:
     name: Deploy to Azure Web Apps
@@ -137,4 +172,4 @@ jobs:
           package: .
 """
     
-    return header + setup + build_steps + deploy_job
+    return header + setup + build_steps + upload_step + deploy_job
