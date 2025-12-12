@@ -136,16 +136,18 @@ def get_issue_details(issue_key):
 
 
 def search_issues(jql: str, max_results: int = 20):
-    """Search Jira issues and return key, summary, status, priority, assignee."""
+    """Search Jira issues using the standard /rest/api/3/search endpoint."""
     base_url = os.getenv('JIRA_BASE_URL')
     user_email = os.getenv('JIRA_USER_EMAIL')
     api_token = os.getenv('JIRA_API_TOKEN')
     if not base_url or not user_email or not api_token:
         raise RuntimeError("Jira environment variables are not set: JIRA_BASE_URL, JIRA_USER_EMAIL, JIRA_API_TOKEN")
 
-    url = f"{base_url}/rest/api/3/search"
+    # Migrate to the new JQL search endpoint per Atlassian CHANGE-2046
+    url = f"{base_url}/rest/api/3/search/jql"
     auth = (user_email, api_token)
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    
     payload = {
         "jql": jql,
         "maxResults": max_results,
