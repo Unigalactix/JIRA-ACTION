@@ -1,0 +1,14 @@
+Testing Jira Search with JQL via /rest/api/3/search/jql...
+Target URL: https://rajesh-kodaganti-quadranttechnologies.atlassian.net/rest/api/3/search/jql
+
+[1] Testing payload with 'query' key...
+Status: 400
+Response: {"errorMessages":["Invalid request payload. Refer to the REST API documentation and try again."]}
+
+[2] Testing payload with 'jql' key...
+Status: 200
+Response: {"issues":[{"expand":"renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations","id":"10311","self":"https://rajesh-kodaganti-quadranttechnologies.atlassian.net/rest/api/3/issue/10311","key":"KAN-13","fields":{"summary":"Compilation Failure and Logical Errors in Java Sort Algorithms Task9.java"}}],"nextPageToken":"EAEYp6W4gbEzIg9wcm9qZWN0ID0gIktBTiIqAltdMiBURU5BTlRfTk9UX0ZPVU5EX0lOX1RFTkFOVF9TVE9SRQ==","isLast":false}
+
+[3] Testing payload with 'jql' key (minimal)...
+Status: 200
+Response: {"issues":[{"id":"10311"},{"id":"10278"},{"id":"10245"},{"id":"10244"},{"id":"10243"},{"id":"10242"},{"id":"10209"},{"id":"10176"},{"id":"10143"}],"isLast":true}
