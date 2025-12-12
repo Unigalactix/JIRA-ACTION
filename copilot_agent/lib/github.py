@@ -176,4 +176,12 @@ def create_copilot_issue(owner, repo, issue_key, summary, description):
     # assignee="copilot" is often invalid if the app/bot user cannot be assigned directly or isn't a repo member.
     issue = repo_obj.create_issue(title=title, body=body)
     logger.info(f"Created Copilot issue #{issue.number}: {title}")
+    
+    # Try to assign copilot (requires PAT permissions)
+    try:
+        issue.add_to_assignees("copilot")
+        logger.info(f"Assigned @copilot to issue #{issue.number}")
+    except Exception as e:
+        logger.warning(f"Failed to assign @copilot to issue #{issue.number}: {e}")
+        
     return {"issue_url": issue.html_url, "issue_number": issue.number}
