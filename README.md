@@ -34,5 +34,14 @@ We support running the official `sooperset/mcp-atlassian` server alongside our a
 
 4.  **Verify**
     Restart VS Code or the Copilot Chat extension. You should now be able to ask Copilot things like:
-    - *"Find the 'Technical Design' page in Confluence"*
     - *"List all high priority bugs"* (using the advanced Atlassian filtering)
+
+## CI/CD Workflow Features
+This agent now supports a **Single Feature Branch** workflow with **Docker Integration**.
+
+- **Workflow**: All automated changes are committed to `feature/copilot-{repo}`.
+- **Docker**: Automatically generates `Dockerfile` for your project (Node.js, Python, .NET, Java) and builds it in CI.
+- **Deployment**: Defaults to GitHub Pages but supports Azure Web Apps.
+- **Commands**:
+    - `POST /generate`: Scaffolds the entire CI/CD pipeline + Dockerfile.
+    - `POST /autofix`: Applies automated fixes from Jira tickets to the feature branch.

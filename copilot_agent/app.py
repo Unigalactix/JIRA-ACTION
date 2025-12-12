@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request
 from copilot_agent.lib.workflow_factory import generate_workflow, generate_dockerfile
 from copilot_agent.lib.config_helper import generate_vs_code_config, mask_config
 from pathlib import Path
-from copilot_agent.lib.github import commit_files, create_pull_request, apply_text_patches, post_pr_comment, create_copilot_issue
+from copilot_agent.lib.github import commit_files, create_pull_request, post_pr_comment, create_copilot_issue
 from copilot_agent.lib.jira import post_jira_comment, transition_issue, get_issue_details, search_issues
 from copilot_agent.lib.logger import setup_logger
 import os
