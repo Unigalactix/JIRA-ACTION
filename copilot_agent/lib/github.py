@@ -143,3 +143,21 @@ def post_pr_comment(owner, repo, pr_number, body):
     issue = repository.get_issue(pr_number)
     comment = issue.create_comment(body)
     return {"comment_url": comment.html_url, "id": comment.id}
+
+def create_copilot_issue(owner, repo, issue_key, summary, description):
+    """Create a GitHub Issue to trigger Copilot Agent.
+    """
+    repo_obj = get_repo(owner, repo)
+
+    title = f"[{issue_key}] Fix: {summary}"
+    description = description or "No details provided."
+    body = (
+        f"@copilot please fix this issue based on the following requirements.\n\n"
+        f"**Jira Issue**: {issue_key}\n"
+        f"**Description**:\n{description}\n"
+    )
+
+    # Create the issue
+    issue = repo_obj.create_issue(title=title, body=body, assignee="copilot")
+    logger.info(f"Created Copilot issue #{issue.number}: {title}")
+    return {"issue_url": issue.html_url, "issue_number": issue.number}
