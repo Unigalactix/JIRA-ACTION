@@ -91,8 +91,6 @@ def agent_tests(repo_path: str) -> dict:
         "details": results
     }
 
-import copilot_agent.lib.infra as infra
-
 @mcp.tool()
 def setup_pages(repo_path: str, project_type: str = "html") -> dict:
     """
@@ -117,7 +115,42 @@ def setup_pages(repo_path: str, project_type: str = "html") -> dict:
         workflows_dir = os.path.join(repo_path, ".github", "workflows")
         os.makedirs(workflows_dir, exist_ok=True)
         
-        workflow_content = infra.generate_github_pages_workflow(project_type)
+        # Inline generation (infra.py was removed)
+        workflow_content = """name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+"""
         target_file = os.path.join(workflows_dir, "pages.yml")
         
         with open(target_file, "w") as f:
