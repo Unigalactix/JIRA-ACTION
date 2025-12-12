@@ -66,22 +66,37 @@ def commit_files(owner, repo, branch, files, message, issue_key=None):
     logger.info(f"Created commit {commit.sha}")
 
     # 4. Update Reference
+    # 4. Update Reference
     try:
-        # If branch existed, update it
         if branch_ref:
             branch_ref.edit(sha=commit.sha)
             logger.info(f"Updated branch {branch}")
+        else:
+            # Should not happen as we handled this in UnboundLocalError below, but for safety
+            repository.create_git_ref(ref=f"refs/heads/{branch}", sha=commit.sha)
+            logger.info(f"Created branch {branch}")
+            
     except UnboundLocalError:
-        # Branch didn't exist (branch_ref undefined), create it
+        # branch_ref was undefined, meaning we are creating a new branch
         try:
             repository.create_git_ref(ref=f"refs/heads/{branch}", sha=commit.sha)
             logger.info(f"Created branch {branch}")
         except GithubException as e:
-            # Race condition check
-            logger.warning(f"Failed to create ref (race condition?): {e}")
-            # Try updating if it was created in mean time
-            branch_ref = repository.get_git_ref(f"heads/{branch}")
-            branch_ref.edit(sha=commit.sha)
+            if e.status == 422:
+                # Reference already exists (race condition)
+                logger.warning(f"Branch {branch} checked as new but now exists (race condition). updating...")
+                try:
+                    # Fetch ref again using 'heads/branch' format which PyGithub prefers for get_git_ref
+                    # But if we are stuck, we can try to use exact ref.
+                    branch_ref = repository.get_git_ref(f"heads/{branch}")
+                    branch_ref.edit(sha=commit.sha)
+                    logger.info(f"Updated branch {branch} after race condition")
+                except GithubException as e2:
+                    logger.error(f"Failed to recover from race condition for {branch}: {e2}")
+                    raise
+            else:
+                 logger.error(f"Failed to create branch {branch}: {e}")
+                 raise
 
     # Notify Jira
     if issue_key:
@@ -158,6 +173,7 @@ def create_copilot_issue(owner, repo, issue_key, summary, description):
     )
 
     # Create the issue
-    issue = repo_obj.create_issue(title=title, body=body, assignee="copilot")
+    # assignee="copilot" is often invalid if the app/bot user cannot be assigned directly or isn't a repo member.
+    issue = repo_obj.create_issue(title=title, body=body)
     logger.info(f"Created Copilot issue #{issue.number}: {title}")
     return {"issue_url": issue.html_url, "issue_number": issue.number}

@@ -63,6 +63,11 @@ async def process_pipeline_job(data: dict):
         logger.error("Missing required fields: repository, language in job payload")
         return {"status": "error", "message": "Missing required fields: repository, language"}
 
+    # Fix: If user/autopilot sends "echo 'No build'" explicitly, we might want to respect it?
+    # But Autopilot logic was changed to send None if not configured.
+    # So here we just pass it through.
+    logger.info(f"Processing job for {repository} ({language}). Build: {build_cmd}, Test: {test_cmd}")
+
     # 1. Fetch Jira Issue Context
     summary = f"Task for {issue_key}"
     description = ""

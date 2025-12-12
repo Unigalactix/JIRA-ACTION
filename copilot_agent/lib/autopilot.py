@@ -32,13 +32,19 @@ class Autopilot:
 
     async def poll_and_process(self):
         """Fetch high priority tickets and process the first one found."""
-        project_keys = os.getenv("JIRA_PROJECT_KEYS", "KAN").split(",")
-        projects_jql = ",".join([f'"{k.strip()}"' for k in project_keys if k.strip()])
+        project_keys_env = os.getenv("JIRA_PROJECT_KEYS")
         
-        # Fetch To Do items from all configured projects
-        jql = f'project in ({projects_jql}) AND status = "To Do" ORDER BY priority DESC, created ASC'
+        jql = ""
+        if project_keys_env and project_keys_env.upper() != "ALL":
+            project_keys = project_keys_env.split(",")
+            projects_jql = ",".join([f'"{k.strip()}"' for k in project_keys if k.strip()])
+            jql = f'project in ({projects_jql}) AND status = "To Do" ORDER BY priority DESC, created ASC'
+        else:
+            # Query all projects
+            jql = 'status = "To Do" ORDER BY priority DESC, created ASC'
         
         try:
+            logger.debug(f"Polling Jira with JQL: {jql}")
             issues = search_issues(jql, max_results=100)
         except Exception as e:
             logger.warning(f"Failed to poll Jira: {e}")
@@ -53,7 +59,6 @@ class Autopilot:
         logger.info(f"Autopilot: Found {len(issues)} active tickets: {', '.join(active_keys)}")
 
         # Prioritize (Already sorted by JQL, but ensuring strict priority)
-        # JQL "priority DESC" usually handles this, but let's be safe.
         prio_order = {"Highest": 0, "High": 1, "Medium": 2, "Low": 3, "Lowest": 4}
         issues.sort(key=lambda x: prio_order.get((x.get("priority") or "Medium"), 2))
 
@@ -71,7 +76,6 @@ class Autopilot:
             transition_issue(issue_key, "In Progress")
         except Exception as e:
             logger.warning(f"Could not transition {issue_key} to In Progress: {e}")
-            # If we can't transition, we might be fighting another agent or user. Skip.
             return
 
         try:
@@ -84,34 +88,45 @@ class Autopilot:
             # 2. Enrich with Auto-Detection (if needed)
             repo_name = config.get("repository")
             if not repo_name:
-                raise ValueError(f"Could not determine Repository for {issue_key}. Please configure DEFAULT_REPO or add JSON to ticket.")
+                default_repo = os.getenv("DEFAULT_REPO")
+                logger.error(f"Failed to determine repository. DEFAULT_REPO env var is: '{default_repo}'")
+                raise ValueError(f"Could not determine Repository for {issue_key}. Please configure DEFAULT_REPO in .env or add JSON to ticket.")
             
             owner, repo = repo_name.split("/")
             gh_repo = get_repo(owner, repo)
             
             # Detect Language
+            # Map GitHub language to our internal keys
+            lang_map = {
+                "c#": "dotnet",
+                "csharp": "dotnet",
+                "javascript": "node",
+                "typescript": "node",
+                "python": "python",
+                "java": "java"
+            }
+
             if not config.get("language"):
                 lang = gh_repo.language
                 if lang:
-                    config["language"] = lang.lower()
-                    logger.info(f"Auto-detected language for {issue_key}: {config['language']}")
+                    normalized = lang.lower()
+                    config["language"] = lang_map.get(normalized, normalized) # Default to raw name if no map
+                    logger.info(f"Auto-detected language for {issue_key}: {lang} -> {config['language']}")
                 else:
                     config["language"] = "python" # Fallback
             
             # Detect Deploy Target (Heuristic)
+            # Default to github-pages if not specified, unless overridden
             if not config.get("deployTarget"):
+                config["deployTarget"] = "github-pages"
+                # Check if we should switch to azure? 
+                # User asked: "SET DEPLOY TARGET TO GITHUB PAGES BY DEFAULT"
+                # We can still check for index.html purely for logging but default is set.
                 try:
-                    # Check for index.html at root -> GitHub Pages
                     gh_repo.get_contents("index.html")
-                    config["deployTarget"] = "github-pages"
-                    logger.info(f"Auto-detected deploy target for {issue_key}: github-pages")
+                    logger.info(f"Confirmed static site (index.html found) for {issue_key}")
                 except GithubException:
-                    pass # Not found
-                
-                # Default to azure-webapps if still unknown
-                # if not config.get("deployTarget"):
-                #    config["deployTarget"] = "azure-webapps"
-                pass # Use factory default (github-pages)
+                    pass 
 
             # 3. Execute Job
             payload = {
@@ -119,24 +134,19 @@ class Autopilot:
                 "repository": repo_name,
                 "language": config["language"],
                 "deployTarget": config.get("deployTarget"),
-                "buildCommand": config.get("buildCommand", "echo 'No build'"), # Defaults
-                "testCommand": config.get("testCommand", "echo 'No test'")
+                # Remove defaults so workflow_factory uses its smart defaults
+                "buildCommand": config.get("buildCommand"), 
+                "testCommand": config.get("testCommand")
             }
             
             logger.info(f"Autopilot executing job for {issue_key}: {json.dumps(payload)}")
             post_jira_comment(issue_key, f"Autopilot engaging.\nTarget: {repo_name}\nConfig: {json.dumps(payload, indent=2)}")
             
-            # Call the app's processing logic (injected callback)
-            # This needs to be async or run in thread if blocking. 
-            # Assuming process_callback is async or fast.
             await self.process_callback(payload)
             
         except Exception as e:
             logger.error(f"Autopilot failed to process {issue_key}: {e}")
             post_jira_comment(issue_key, f"Autopilot failed: {e}")
-            # Move back to To Do or stick in In Progress? 
-            # Use 'In Review' to signal it needs human attention maybe?
-            # Or leave in In Progress so we don't loop-fail it.
 
     def _parse_context(self, issue_key, description):
         """Extract config from JSON block or use Smart Defaults."""
@@ -161,5 +171,7 @@ class Autopilot:
             # Fallback to Global Default
             if not config["repository"]:
                 config["repository"] = os.getenv("DEFAULT_REPO")
+                if config["repository"]:
+                     logger.info(f"Using Global DEFAULT_REPO: {config['repository']}")
         
         return config
