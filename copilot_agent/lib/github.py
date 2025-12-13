@@ -1,6 +1,7 @@
 import os
 import base64
 import time
+import requests
 from github import Github, InputGitTreeElement, GithubException
 from copilot_agent.lib.logger import setup_logger
 from copilot_agent.lib.jira import post_jira_comment
@@ -23,6 +24,26 @@ def get_repo(owner, repo_name):
     except GithubException as e:
         logger.error(f"Failed to get repository {owner}/{repo_name}: {e}")
         raise
+
+def assign_issue_to_copilot(owner, repo, issue_number, pat_token=None):
+    """
+    Assigns a GitHub issue to Copilot using REST API.
+    Ref: https://github.blog/changelog/2025-12-03-assign-issues-to-copilot-using-the-api/
+    """
+    if pat_token is None:
+        pat_token = os.getenv('GHUB_TOKEN') or os.getenv('GITHUB_TOKEN')
+    
+    url = f"https://api.github.com/repos/{owner}/{repo}/issues/{issue_number}/assignees"
+    headers = {
+        "Authorization": f"token {pat_token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28"
+    }
+    data = {"assignees": ["copilot"]}
+    
+    response = requests.post(url, headers=headers, json=data)
+    response.raise_for_status()
+    return response.json()
 
 def commit_files(owner, repo, branch, files, message, issue_key=None):
     """
@@ -178,8 +199,9 @@ def create_copilot_issue(owner, repo, issue_key, summary, description):
     logger.info(f"Created Copilot issue #{issue.number}: {title}")
     
     # Try to assign copilot (requires PAT permissions)
+    # Try to assign copilot (requires PAT permissions)
     try:
-        issue.add_to_assignees("copilot")
+        assign_issue_to_copilot(owner, repo, issue.number)
         logger.info(f"Assigned @copilot to issue #{issue.number}")
     except Exception as e:
         logger.warning(f"Failed to assign @copilot to issue #{issue.number}: {e}")
