@@ -45,6 +45,23 @@ def assign_issue_to_copilot(owner, repo, issue_number, pat_token=None):
     response.raise_for_status()
     return response.json()
 
+def add_label_to_issue(owner, repo, issue_number, labels):
+    """Add labels to an issue.
+    Ref: provided user script
+    """
+    token = os.getenv("GHUB_TOKEN") or os.getenv("GITHUB_TOKEN")
+    url = f"https://api.github.com/repos/{owner}/{repo}/issues/{issue_number}/labels"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28"
+    }
+    payload = {"labels": labels}
+    
+    response = requests.post(url, headers=headers, json=payload)
+    response.raise_for_status()
+    return response.json()
+
 def commit_files(owner, repo, branch, files, message, issue_key=None):
     """
     Commit multiple files to a branch. Creates branch if it doesn't exist.
@@ -192,11 +209,17 @@ def create_copilot_issue(owner, repo, issue_key, summary, description):
     logger.info(f"Created Copilot issue #{issue.number}: {title}")
     
     # Try to assign copilot (requires PAT permissions)
-    # Try to assign copilot (requires PAT permissions)
     try:
         assign_issue_to_copilot(owner, repo, issue.number)
         logger.info(f"Assigned @copilot to issue #{issue.number}")
     except Exception as e:
         logger.warning(f"Failed to assign @copilot to issue #{issue.number}: {e}")
         
+    # Add labels per reference implementation
+    try:
+        add_label_to_issue(owner, repo, issue.number, ["copilot", "jira-sync"])
+        logger.info(f"Added labels to issue #{issue.number}")
+    except Exception as e:
+         logger.warning(f"Failed to add labels to issue #{issue.number}: {e}")
+
     return {"issue_url": issue.html_url, "issue_number": issue.number}
