@@ -173,6 +173,19 @@ def create_pull_request(owner, repo, branch, issue_key=None):
     )
     logger.info(f"Created PR #{pr.number}: {pr.html_url}")
     
+    # Assign to Copilot & Add Labels (PRs are technically Issues in API)
+    try:
+        assign_issue_to_copilot(owner, repo, pr.number)
+        logger.info(f"Assigned @copilot to PR #{pr.number}")
+    except Exception as e:
+        logger.warning(f"Failed to assign @copilot to PR #{pr.number}: {e}")
+
+    try:
+        add_label_to_issue(owner, repo, pr.number, ["copilot", "jira-sync"])
+        logger.info(f"Added labels to PR #{pr.number}")
+    except Exception as e:
+        logger.warning(f"Failed to add labels to PR #{pr.number}: {e}")
+
     if issue_key:
          try:
             post_jira_comment(issue_key, f"Created Pull Request #{pr.number}", link_text="View PR", link_url=pr.html_url)
