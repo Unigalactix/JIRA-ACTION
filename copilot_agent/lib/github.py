@@ -52,30 +52,28 @@ def commit_files(owner, repo, branch, files, message, issue_key=None):
     """
     repository = get_repo(owner, repo)
     
-    # 1. Get Base SHA (main) for new branches, or Current SHA for existing
+    # 1. Get Base SHA (default branch) for new branches, or Current SHA for existing
     parent_sha = None
+    default_branch = repository.default_branch
     try:
         branch_ref = repository.get_git_ref(f"heads/{branch}")
         parent_sha = branch_ref.object.sha
         logger.info(f"Branch '{branch}' exists. Appending to {parent_sha}")
     except GithubException:
-        # Branch doesn't exist, get main
+        # Branch doesn't exist, get default branch
         try:
-            main_ref = repository.get_git_ref("heads/main")
-            parent_sha = main_ref.object.sha
-            # Create branch immediately or wait? better to create ref at end?
-            # Creating ref at end allows 'atomic' feel, but standard git API usage often creates ref first.
-            # Let's create the ref after commit to be safe, but we need a parent SHA. 
-            logger.info(f"Branch '{branch}' new. Baselining from main {parent_sha}")
+            # Note: PyGithub requires "heads/" prefix, but default_branch is typically just "main" or "master"
+            base_ref = repository.get_git_ref(f"heads/{default_branch}")
+            parent_sha = base_ref.object.sha
+            logger.info(f"Branch '{branch}' new. Baselining from {default_branch} {parent_sha}")
         except GithubException as e:
-             logger.error(f"Cannot find main branch: {e}")
+             logger.error(f"Cannot find default branch {default_branch}: {e}")
              raise
 
     # 2. Create Blobs & Tree
     elements = []
     for path, content in files.items():
         blob = repository.create_git_blob(content, "utf-8")
-        # Mode 100644 for file, 100755 for executable. Using standard file.
         elements.append(InputGitTreeElement(path=path, mode="100644", type="blob", sha=blob.sha))
     
     base_tree = repository.get_git_tree(parent_sha)
@@ -87,13 +85,11 @@ def commit_files(owner, repo, branch, files, message, issue_key=None):
     logger.info(f"Created commit {commit.sha}")
 
     # 4. Update Reference
-    # 4. Update Reference
     try:
         if branch_ref:
             branch_ref.edit(sha=commit.sha)
             logger.info(f"Updated branch {branch}")
         else:
-            # Should not happen as we handled this in UnboundLocalError below, but for safety
             repository.create_git_ref(ref=f"refs/heads/{branch}", sha=commit.sha)
             logger.info(f"Created branch {branch}")
             
@@ -107,8 +103,6 @@ def commit_files(owner, repo, branch, files, message, issue_key=None):
                 # Reference already exists (race condition)
                 logger.warning(f"Branch {branch} checked as new but now exists (race condition). updating...")
                 try:
-                    # Fetch ref again using 'heads/branch' format which PyGithub prefers for get_git_ref
-                    # But if we are stuck, we can try to use exact ref.
                     branch_ref = repository.get_git_ref(f"heads/{branch}")
                     branch_ref.edit(sha=commit.sha)
                     logger.info(f"Updated branch {branch} after race condition")
@@ -138,15 +132,14 @@ def create_pull_request(owner, repo, branch, issue_key=None):
     Create a Pull Request or return existing one.
     """
     repo_obj = get_repo(owner, repo)
+    default_branch = repo_obj.default_branch
     
     # Check for existing PR
-    pulls = repo_obj.get_pulls(state='open', head=f"{owner}:{branch}", base='main')
+    pulls = repo_obj.get_pulls(state='open', head=f"{owner}:{branch}", base=default_branch)
     for pr in pulls:
         logger.info(f"Found existing PR #{pr.number} for {branch}")
         if issue_key:
             try:
-                # Optional: Add comment to existing PR? existing logic posted Jira comments 
-                # but maybe we don't want to spam existing PRs.
                 pass 
             except Exception:
                 pass
@@ -159,7 +152,7 @@ def create_pull_request(owner, repo, branch, issue_key=None):
         title=title,
         body=body,
         head=branch,
-        base="main",
+        base=default_branch,
     )
     logger.info(f"Created PR #{pr.number}: {pr.html_url}")
     
