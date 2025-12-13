@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request
 from copilot_agent.lib.workflow_factory import generate_workflow, generate_dockerfile
 from copilot_agent.lib.config_helper import generate_vs_code_config, mask_config
 from pathlib import Path
-from copilot_agent.lib.github import commit_files, create_pull_request, post_pr_comment, create_copilot_issue
+from copilot_agent.lib.github import commit_files, create_pull_request, post_pr_comment
 from copilot_agent.lib.jira import post_jira_comment, transition_issue, get_issue_details, search_issues
 from copilot_agent.lib.logger import setup_logger
 import os
@@ -81,26 +81,8 @@ async def process_pipeline_job(data: dict):
 
     owner, repo = repository.split("/")
 
-    # 2. Trigger Copilot Agent (Native)
-    copilot_issue_info = {"issue_url": "skipped", "issue_number": -1}
-    try:
-        copilot_issue_info = create_copilot_issue(owner, repo, issue_key, summary, description)
-        logger.info(f"Created Copilot Issue: {copilot_issue_info['issue_url']}")
-    except Exception as e:
-        logger.error(f"Failed to create Copilot Issue: {e}")
-
-    # 3. Create CI/CD Pipeline (Standard)
-    # NOTIFY: Copilot assigned
-    if issue_key and copilot_issue_info.get("issue_url") != "skipped":
-        try:
-            post_jira_comment(
-                issue_key, 
-                "Copilot Agent has been assigned to fix the code.",
-                link_text="Tracking Issue",
-                link_url=copilot_issue_info["issue_url"]
-            )
-        except Exception as e:
-            logger.warning(f"Failed to post Jira comment about Copilot assignment for {issue_key}: {e}")
+    # 2. Trigger Copilot Agent via PR (Issue creation skipped as per user request)
+    # The assignment will happen inside create_pull_request
 
     # Generate Content
     workflow_content = generate_workflow(repository, language, build_cmd, test_cmd, deploy_target)
