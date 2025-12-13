@@ -39,10 +39,10 @@ class Autopilot:
         if project_keys_env and project_keys_env.upper() != "ALL":
             project_keys = project_keys_env.split(",")
             projects_jql = ",".join([f'"{k.strip()}"' for k in project_keys if k.strip()])
-            jql = f'project in ({projects_jql}) AND status = "To Do" ORDER BY priority DESC, created ASC'
+            jql = f'project in ({projects_jql}) AND statusCategory = "To Do" ORDER BY priority DESC, created ASC'
         else:
             # Query all projects
-            jql = 'status = "To Do" ORDER BY priority DESC, created ASC'
+            jql = 'statusCategory = "To Do" ORDER BY priority DESC, created ASC'
         
         try:
             logger.debug(f"Polling Jira with JQL: {jql}")
