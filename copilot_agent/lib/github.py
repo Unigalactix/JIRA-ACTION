@@ -117,14 +117,24 @@ def commit_files(owner, repo, branch, files, message, issue_key=None):
             logger.info(f"Created branch {branch}")
         except GithubException as e:
             if e.status == 422:
-                # Reference already exists (race condition)
-                logger.warning(f"Branch {branch} checked as new but now exists (race condition). updating...")
+                # 422 could mean "Reference already exists" OR "Validation Failed"
+                logger.warning(f"Branch check-new failed with 422 (Race Condition or Invalid?). GitHub Message: {e.data}")
+                
                 try:
-                    branch_ref = repository.get_git_ref(f"heads/{branch}")
+                    # Attempt recovery: Update the existing ref
+                    # Try standar format first
+                    try:
+                        branch_ref = repository.get_git_ref(f"heads/{branch}")
+                    except GithubException:
+                        # Fallback: Try with full refs prefix if simple heads fails
+                        logger.info(f"get_git_ref(heads/{branch}) failed (404?). Trying refs/heads/{branch}")
+                        branch_ref = repository.get_git_ref(f"refs/heads/{branch}")
+                    
                     branch_ref.edit(sha=commit.sha)
                     logger.info(f"Updated branch {branch} after race condition")
+                    
                 except GithubException as e2:
-                    logger.error(f"Failed to recover from race condition for {branch}: {e2}")
+                    logger.error(f"Failed to recover from race condition for {branch}: {e2}. Original 422 data: {e.data}")
                     raise
             else:
                  logger.error(f"Failed to create branch {branch}: {e}")
