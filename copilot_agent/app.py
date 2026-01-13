@@ -28,6 +28,27 @@ load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 logger = setup_logger("app")
 app = FastAPI()
 
+# Load optional per-board POST_PR_STATUS mapping
+BOARD_POST_PR_STATUS_PATH = Path(__file__).parent.parent / "config" / "board_post_pr_status.json"
+board_post_pr_status = {}
+try:
+    if BOARD_POST_PR_STATUS_PATH.exists():
+        with open(BOARD_POST_PR_STATUS_PATH, 'r') as f:
+            board_post_pr_status = json.load(f)
+        logger.info("[Config] Loaded board_post_pr_status.json")
+except Exception as e:
+    logger.warning(f"[Config] Failed to load board_post_pr_status.json: {e}")
+    board_post_pr_status = {}
+
+def get_post_pr_status_for_issue(issue_key):
+    """Get the post-PR status for a given issue based on project configuration."""
+    project_key = issue_key.split('-')[0] if issue_key and '-' in issue_key else None
+    
+    if project_key and project_key in board_post_pr_status:
+        return board_post_pr_status[project_key]
+    
+    return os.getenv('POST_PR_STATUS', 'In Progress')
+
 # Global system status for dashboard
 system_status = {
     "activeTickets": [],
@@ -414,8 +435,9 @@ async def process_pipeline_job(data: dict):
                         link_text="View PR",
                         link_url=pr_info["pr_url"]
                     )
-                    transition_issue(issue_key, "In Review")
-                    log_progress(f"Transitioned {issue_key} to 'In Review'")
+                    post_pr_status = get_post_pr_status_for_issue(issue_key)
+                    transition_issue(issue_key, post_pr_status)
+                    log_progress(f"Transitioned {issue_key} to '{post_pr_status}'")
                 except Exception as e:
                     logger.warning(f"Failed to post Jira comment or transition {issue_key} for PR: {e}")
 
@@ -578,8 +600,9 @@ async def generate_pipeline(req: Request):
                         link_text="View PR",
                         link_url=pr_info["pr_url"]
                     )
-                    transition_issue(issue_key, "In Review")
-                    logger.info(f"Posted Jira comment and transitioned {issue_key} to 'In Review'")
+                    post_pr_status = get_post_pr_status_for_issue(issue_key)
+                    transition_issue(issue_key, post_pr_status)
+                    logger.info(f"Posted Jira comment and transitioned {issue_key} to '{post_pr_status}'")
                 except Exception as e:
                     logger.warning(f"Failed to post Jira comment or transition {issue_key} for PR: {e}")
 
@@ -782,7 +805,8 @@ async def autofix(req: Request):
             pass
 
         if pr.get("is_new"):
-            transition_issue(issue_key, "In Review")
+            post_pr_status = get_post_pr_status_for_issue(issue_key)
+            transition_issue(issue_key, post_pr_status)
         
         return {"status": "success", "commit_url": commit_info["commit_url"], "pr_url": pr["pr_url"]}
         
