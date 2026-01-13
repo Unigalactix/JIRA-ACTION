@@ -28,6 +28,12 @@ load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 logger = setup_logger("app")
 app = FastAPI()
 
+# Configuration constants
+AUTOPILOT_INTERVAL_SECONDS = 60  # Poll interval in seconds
+DASHBOARD_POLL_INTERVAL_MS = 3000  # Dashboard update interval in milliseconds
+COPILOT_USERNAME = os.getenv("COPILOT_USERNAME", "copilot")  # Configurable Copilot username
+JIRA_KEY_PATTERN = os.getenv("JIRA_KEY_PATTERN", r'\b([A-Z]{2,10}-\d+)\b')  # Configurable Jira key regex
+
 # Load optional per-board POST_PR_STATUS mapping
 BOARD_POST_PR_STATUS_PATH = Path(__file__).parent.parent / "config" / "board_post_pr_status.json"
 board_post_pr_status = {}
@@ -61,7 +67,7 @@ system_status = {
     "currentJiraUrl": None,
     "currentPrUrl": None,
     "currentPayload": None,
-    "nextScanTime": time.time() * 1000 + 60000,
+    "nextScanTime": time.time() * 1000 + (AUTOPILOT_INTERVAL_SECONDS * 1000),
 }
 
 # Mount static files for dashboard
@@ -256,7 +262,9 @@ async def monitor_ci_checks():
                                     
                                     # Auto-approve
                                     logger.info(f"Auto-approving sub-PR #{sub_pr['number']}")
-                                    approve_pull_request(ticket.get("repoName"), sub_pr["number"])
+                                    approve_result = approve_pull_request(ticket.get("repoName"), sub_pr["number"])
+                                    if not approve_result.get("ok"):
+                                        logger.warning(f"Failed to approve sub-PR #{sub_pr['number']}: {approve_result.get('error')}")
                                     
                                     # Enable auto-merge
                                     auto_res = enable_pull_request_auto_merge(

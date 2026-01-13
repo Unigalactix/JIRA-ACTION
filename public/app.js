@@ -1,5 +1,15 @@
 // Dashboard JavaScript
 let lastUpdate = null;
+let errorCount = 0;
+const BASE_POLL_INTERVAL = 3000; // Base polling interval in milliseconds
+const MAX_POLL_INTERVAL = 30000; // Maximum polling interval in milliseconds
+
+// Calculate backoff interval based on error count
+function getPollingInterval() {
+    if (errorCount === 0) return BASE_POLL_INTERVAL;
+    // Exponential backoff: 3s, 6s, 12s, 24s, 30s (max)
+    return Math.min(BASE_POLL_INTERVAL * Math.pow(2, errorCount), MAX_POLL_INTERVAL);
+}
 
 // Fetch status from backend
 async function fetchStatus() {
@@ -8,8 +18,10 @@ async function fetchStatus() {
         const data = await response.json();
         updateDashboard(data);
         lastUpdate = new Date();
+        errorCount = 0; // Reset error count on success
     } catch (error) {
         console.error('Failed to fetch status:', error);
+        errorCount = Math.min(errorCount + 1, 5); // Cap at 5 to avoid excessive backoff
     }
 }
 
@@ -186,8 +198,13 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-// Auto-refresh every 3 seconds
-setInterval(fetchStatus, 3000);
+// Auto-refresh with adaptive polling interval
+function scheduleNextUpdate() {
+    const interval = getPollingInterval();
+    setTimeout(() => {
+        fetchStatus().then(scheduleNextUpdate);
+    }, interval);
+}
 
-// Initial fetch
-fetchStatus();
+// Initial fetch and start polling
+fetchStatus().then(scheduleNextUpdate);

@@ -302,6 +302,8 @@ def find_copilot_sub_pr(repo_name, main_pr_number):
     """
     Find a Copilot-created sub-PR that references the main PR.
     """
+    from copilot_agent.app import COPILOT_USERNAME
+    
     owner, repo = repo_name.split("/")
     repository = get_repo(owner, repo)
     
@@ -311,7 +313,7 @@ def find_copilot_sub_pr(repo_name, main_pr_number):
         
         for pr in pulls:
             # Check if this is a Copilot PR (by author or title)
-            if pr.user and pr.user.login == 'copilot':
+            if pr.user and pr.user.login == COPILOT_USERNAME:
                 # Check if it references our main PR in body or title
                 if pr.body and f"#{main_pr_number}" in pr.body:
                     return {
@@ -514,6 +516,7 @@ def get_active_org_prs_with_jira_keys(org):
     Get all open PRs in an organization that have Jira keys in their title or body.
     """
     import re
+    from copilot_agent.app import JIRA_KEY_PATTERN
     
     token = os.getenv("GHUB_TOKEN") or os.getenv("GITHUB_TOKEN")
     g = _get_github_instance()
@@ -529,14 +532,12 @@ def get_active_org_prs_with_jira_keys(org):
                 pulls = repo.get_pulls(state='open')
                 
                 for pr in pulls:
-                    # Look for Jira keys (e.g., KAN-123, NDE-456)
-                    jira_key_pattern = r'\b([A-Z]{2,10}-\d+)\b'
-                    
+                    # Look for Jira keys using configurable pattern
                     matches = []
                     if pr.title:
-                        matches.extend(re.findall(jira_key_pattern, pr.title))
+                        matches.extend(re.findall(JIRA_KEY_PATTERN, pr.title))
                     if pr.body:
-                        matches.extend(re.findall(jira_key_pattern, pr.body))
+                        matches.extend(re.findall(JIRA_KEY_PATTERN, pr.body))
                     
                     if matches:
                         active_prs.append({
