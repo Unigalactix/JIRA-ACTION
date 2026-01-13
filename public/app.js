@@ -1,9 +1,24 @@
 // Dashboard JavaScript
 let lastUpdate = null;
 let errorCount = 0;
-const BASE_POLL_INTERVAL = 3000; // Base polling interval in milliseconds
-const MAX_POLL_INTERVAL = 30000; // Maximum polling interval in milliseconds
-const MAX_ERROR_COUNT = 5; // Maximum error count before capping backoff
+// Configuration values (defaults, will be fetched from API)
+let BASE_POLL_INTERVAL = 3000; // Base polling interval in milliseconds
+let MAX_POLL_INTERVAL = 30000; // Maximum polling interval in milliseconds
+let MAX_ERROR_COUNT = 5; // Maximum error count before capping backoff
+
+// Fetch configuration from API
+async function fetchConfig() {
+    try {
+        const response = await fetch('/api/config');
+        const config = await response.json();
+        BASE_POLL_INTERVAL = config.pollIntervalMs;
+        MAX_POLL_INTERVAL = config.maxPollIntervalMs;
+        MAX_ERROR_COUNT = config.maxErrorCount;
+        console.log('Dashboard config loaded:', config);
+    } catch (error) {
+        console.warn('Failed to fetch config, using defaults:', error);
+    }
+}
 
 // Calculate backoff interval based on error count
 function getPollingInterval() {
@@ -207,5 +222,7 @@ function scheduleNextUpdate() {
     }, interval);
 }
 
-// Initial fetch and start polling
-fetchStatus().then(scheduleNextUpdate);
+// Initialize dashboard: fetch config, then start polling
+fetchConfig().then(() => {
+    fetchStatus().then(scheduleNextUpdate);
+});

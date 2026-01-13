@@ -20,6 +20,8 @@ from copilot_agent.lib.config import (
     MILLISECONDS_PER_SECOND,
     COPILOT_USERNAME,
     JIRA_KEY_PATTERN,
+    MAX_ERROR_COUNT,
+    MAX_POLL_INTERVAL_MS,
 )
 import os
 import time
@@ -69,7 +71,7 @@ system_status = {
     "currentJiraUrl": None,
     "currentPrUrl": None,
     "currentPayload": None,
-    "nextScanTime": time.time() * MILLISECONDS_PER_SECOND + (AUTOPILOT_INTERVAL_SECONDS * MILLISECONDS_PER_SECOND),
+    "nextScanTime": (time.time() + AUTOPILOT_INTERVAL_SECONDS) * MILLISECONDS_PER_SECOND,
 }
 
 # Mount static files for dashboard
@@ -94,6 +96,11 @@ if public_dir.exists():
 
 @app.on_event("startup")
 async def startup_event():
+    """
+    Initialize the application on startup.
+    Note: @app.on_event is deprecated in newer FastAPI versions.
+    Consider migrating to @app.lifespan context manager in the future.
+    """
     logger.info("Starting Copilot Agent...")
     
     # Auto-generate MCP Config for visibility
@@ -132,6 +139,15 @@ def health():
 async def get_status():
     """Return current system status for dashboard."""
     return system_status
+
+@app.get("/api/config")
+async def get_dashboard_config():
+    """Return dashboard configuration values."""
+    return {
+        "pollIntervalMs": DASHBOARD_POLL_INTERVAL_MS,
+        "maxPollIntervalMs": MAX_POLL_INTERVAL_MS,
+        "maxErrorCount": MAX_ERROR_COUNT,
+    }
 
 async def reconcile_active_prs_on_startup():
     """Reconcile active PRs on startup to resume monitoring."""

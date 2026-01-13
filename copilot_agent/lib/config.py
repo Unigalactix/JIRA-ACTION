@@ -16,5 +16,7 @@ COPILOT_USERNAME = os.getenv("COPILOT_USERNAME", "copilot")
 JIRA_KEY_PATTERN = os.getenv("JIRA_KEY_PATTERN", r'\b([A-Z]{2,10}-\d+)\b')
 
 # Dashboard Configuration
+# Maximum number of consecutive errors before capping exponential backoff
 MAX_ERROR_COUNT = 5
+# Maximum polling interval in milliseconds for dashboard updates during errors
 MAX_POLL_INTERVAL_MS = 30000
