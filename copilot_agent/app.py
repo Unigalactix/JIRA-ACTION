@@ -1,8 +1,16 @@
 from fastapi import FastAPI, Request
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from copilot_agent.lib.workflow_factory import generate_workflow, generate_dockerfile
 from copilot_agent.lib.config_helper import generate_vs_code_config, mask_config
 from pathlib import Path
-from copilot_agent.lib.github import commit_files, create_pull_request, post_pr_comment
+from copilot_agent.lib.github import (
+    commit_files, create_pull_request, post_pr_comment,
+    get_latest_workflow_run_for_ref, get_jobs_for_run, find_copilot_sub_pr,
+    get_pull_request_details, is_pull_request_merged, mark_pull_request_ready_for_review,
+    approve_pull_request, enable_pull_request_auto_merge, merge_pull_request,
+    get_active_org_prs_with_jira_keys
+)
 from copilot_agent.lib.jira import post_jira_comment, transition_issue, get_issue_details, search_issues
 from copilot_agent.lib.logger import setup_logger
 import os
@@ -20,8 +28,43 @@ load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 logger = setup_logger("app")
 app = FastAPI()
 
+# Global system status for dashboard
+system_status = {
+    "activeTickets": [],
+    "monitoredTickets": [],
+    "processedCount": 0,
+    "scanHistory": [],
+    "currentPhase": "Initializing",
+    "currentTicketKey": None,
+    "currentTicketLogs": [],
+    "currentJiraUrl": None,
+    "currentPrUrl": None,
+    "currentPayload": None,
+    "nextScanTime": time.time() * 1000 + 60000,
+}
+
+# Mount static files for dashboard
+public_dir = Path(__file__).parent.parent / "public"
+if public_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(public_dir)), name="static")
+    
+    # Serve index.html at root
+    @app.get("/")
+    async def serve_dashboard():
+        return FileResponse(str(public_dir / "index.html"))
+    
+    # Serve CSS
+    @app.get("/styles.css")
+    async def serve_css():
+        return FileResponse(str(public_dir / "styles.css"))
+    
+    # Serve JS
+    @app.get("/app.js")
+    async def serve_js():
+        return FileResponse(str(public_dir / "app.js"))
+
 @app.on_event("startup")
-def startup_event():
+async def startup_event():
     logger.info("Starting Copilot Agent...")
     
     # Auto-generate MCP Config for visibility
@@ -42,11 +85,227 @@ def startup_event():
     autopilot = Autopilot(process_pipeline_job)
     asyncio.create_task(autopilot.start())
     logger.info("Autopilot background task launched.")
+    
+    # Start CI monitoring loop
+    asyncio.create_task(monitor_ci_checks())
+    logger.info("CI monitoring task launched.")
+    
+    # Reconcile active PRs on startup
+    asyncio.create_task(reconcile_active_prs_on_startup())
+    logger.info("PR reconciliation task launched.")
 
 @app.get("/health")
 def health():
     logger.info("Health check requested")
     return {"status": "ok"}
+
+@app.get("/api/status")
+async def get_status():
+    """Return current system status for dashboard."""
+    return system_status
+
+async def reconcile_active_prs_on_startup():
+    """Reconcile active PRs on startup to resume monitoring."""
+    try:
+        await asyncio.sleep(5)  # Wait for startup to complete
+        
+        org = os.getenv("GHUB_ORG", "Unigalactix")
+        logger.info(f"Reconciling active PRs in org: {org}")
+        
+        prs = get_active_org_prs_with_jira_keys(org)
+        
+        if not prs:
+            logger.info("No open PRs with Jira keys found to reconcile.")
+            return
+        
+        for pr in prs:
+            issue_key = pr.get("jiraKey")
+            try:
+                issue = get_issue_details(issue_key)
+                status_name = issue.get("status", "")
+                priority = issue.get("priority", "Medium")
+                
+                # Only monitor active tickets
+                is_active = any(keyword in status_name.lower() for keyword in 
+                              ["in progress", "processing", "in review", "active"])
+                is_done = any(keyword in status_name.lower() for keyword in 
+                            ["done", "closed", "resolved"])
+                
+                if is_done or not is_active:
+                    continue
+                
+                # Avoid duplicates
+                already = any(
+                    t.get("key") == issue_key or t.get("prUrl") == pr.get("prUrl")
+                    for t in system_status["monitoredTickets"]
+                )
+                if already:
+                    continue
+                
+                history_item = {
+                    "key": issue_key,
+                    "priority": priority,
+                    "result": "Resumed",
+                    "time": time.strftime("%H:%M:%S"),
+                    "jiraUrl": f"{os.getenv('JIRA_BASE_URL', '')}/browse/{issue_key}",
+                    "prUrl": pr.get("prUrl"),
+                    "repoName": pr.get("repoName"),
+                    "branch": pr.get("branch"),
+                    "payload": None,
+                    "language": None,
+                    "deployTarget": None,
+                    "checks": [],
+                    "headSha": pr.get("headSha"),
+                    "copilotPrUrl": None,
+                    "copilotMerged": False,
+                    "toolUsed": "Reconcile",
+                }
+                
+                system_status["scanHistory"].insert(0, history_item)
+                system_status["monitoredTickets"].append(history_item)
+                
+                logger.info(f"Resumed monitoring PR {pr.get('prUrl')} for ticket {issue_key}")
+                
+                try:
+                    post_jira_comment(
+                        issue_key,
+                        f"🔁 Server restarted: resuming monitoring for active PR\nPR: {pr.get('prUrl')}"
+                    )
+                except:
+                    pass
+                    
+            except Exception as e:
+                logger.warning(f"Failed to reconcile {issue_key}: {e}")
+                
+    except Exception as e:
+        logger.error(f"Reconciliation error: {e}")
+
+async def monitor_ci_checks():
+    """Background task to monitor CI checks for tracked PRs."""
+    await asyncio.sleep(10)  # Wait for startup
+    
+    while True:
+        try:
+            if system_status["monitoredTickets"]:
+                for ticket in system_status["monitoredTickets"]:
+                    if not ticket.get("branch"):
+                        continue
+                    
+                    # Get latest workflow run
+                    ref = ticket.get("headSha") or ticket.get("branch")
+                    latest_run = get_latest_workflow_run_for_ref(
+                        ticket.get("repoName"), ref
+                    )
+                    
+                    if latest_run and latest_run.get("id"):
+                        jobs = get_jobs_for_run(ticket.get("repoName"), latest_run["id"])
+                        
+                        ticket["checks"] = [
+                            {
+                                "name": job.get("name"),
+                                "status": job.get("status"),
+                                "conclusion": job.get("conclusion"),
+                                "url": job.get("html_url", latest_run.get("html_url", "")),
+                            }
+                            for job in jobs
+                        ]
+                    
+                    # Check for Copilot sub-PR
+                    if not ticket.get("copilotMerged") and ticket.get("prUrl"):
+                        try:
+                            main_pr_number = int(ticket["prUrl"].split("/")[-1])
+                            sub_pr = find_copilot_sub_pr(ticket.get("repoName"), main_pr_number)
+                            
+                            if sub_pr:
+                                ticket["copilotPrUrl"] = sub_pr.get("html_url")
+                                
+                                # Check if WIP
+                                is_wip = "WIP" in sub_pr.get("title", "").upper()
+                                
+                                if not is_wip:
+                                    # Try to undraft if needed
+                                    if sub_pr.get("draft"):
+                                        logger.info(f"Marking sub-PR #{sub_pr['number']} ready for review")
+                                        mark_pull_request_ready_for_review(
+                                            ticket.get("repoName"), sub_pr["number"]
+                                        )
+                                        ticket["toolUsed"] = "Autopilot + Undraft"
+                                    else:
+                                        ticket["toolUsed"] = "Autopilot"
+                                    
+                                    # Auto-approve
+                                    logger.info(f"Auto-approving sub-PR #{sub_pr['number']}")
+                                    approve_pull_request(ticket.get("repoName"), sub_pr["number"])
+                                    
+                                    # Enable auto-merge
+                                    auto_res = enable_pull_request_auto_merge(
+                                        ticket.get("repoName"), sub_pr["number"], "SQUASH"
+                                    )
+                                    
+                                    if auto_res.get("ok"):
+                                        logger.info(f"Auto-merge enabled for sub-PR #{sub_pr['number']}")
+                                        try:
+                                            post_jira_comment(
+                                                ticket["key"],
+                                                f"🤖 **Copilot Update**: Auto-merge enabled for sub-PR #{sub_pr['number']}"
+                                            )
+                                        except:
+                                            pass
+                                        
+                                        # Check if already merged
+                                        merged_check = is_pull_request_merged(
+                                            ticket.get("repoName"), sub_pr["number"]
+                                        )
+                                        if merged_check.get("merged"):
+                                            ticket["copilotMerged"] = True
+                                    else:
+                                        # Fallback: try immediate merge
+                                        logger.info(f"Attempting immediate merge for sub-PR #{sub_pr['number']}")
+                                        merge_res = merge_pull_request(
+                                            ticket.get("repoName"), sub_pr["number"], "squash"
+                                        )
+                                        
+                                        if merge_res.get("merged"):
+                                            ticket["copilotMerged"] = True
+                                            logger.info(f"Successfully merged sub-PR #{sub_pr['number']}")
+                                            try:
+                                                post_jira_comment(
+                                                    ticket["key"],
+                                                    f"🤖 **Copilot Update**: PR #{sub_pr['number']} merged successfully"
+                                                )
+                                            except:
+                                                pass
+                                
+                        except Exception as e:
+                            logger.debug(f"Sub-PR check error for {ticket['key']}: {e}")
+                    
+                    # Check if main PR is merged and move to Done
+                    if ticket.get("prUrl"):
+                        try:
+                            pr_number = int(ticket["prUrl"].split("/")[-1])
+                            merged_check = is_pull_request_merged(
+                                ticket.get("repoName"), pr_number
+                            )
+                            
+                            if merged_check.get("merged"):
+                                logger.info(f"Main PR merged for {ticket['key']}, moving to Done")
+                                try:
+                                    post_jira_comment(
+                                        ticket["key"],
+                                        f"✅ Pull Request #{pr_number} merged! Task complete."
+                                    )
+                                    transition_issue(ticket["key"], "Done")
+                                    # Remove from monitored list
+                                    system_status["monitoredTickets"].remove(ticket)
+                                except Exception as e:
+                                    logger.warning(f"Failed to transition {ticket['key']} to Done: {e}")
+                        except:
+                            pass
+                    
+        except Exception as e:
+            logger.error(f"CI monitoring error: {e}")
+        
+        await asyncio.sleep(30)  # Check every 30 seconds
 
 async def process_pipeline_job(data: dict):
     """
@@ -63,10 +322,20 @@ async def process_pipeline_job(data: dict):
         logger.error("Missing required fields: repository, language in job payload")
         return {"status": "error", "message": "Missing required fields: repository, language"}
 
-    # Fix: If user/autopilot sends "echo 'No build'" explicitly, we might want to respect it?
-    # But Autopilot logic was changed to send None if not configured.
-    # So here we just pass it through.
-    logger.info(f"Processing job for {repository} ({language}). Build: {build_cmd}, Test: {test_cmd}")
+    # Update system status
+    system_status["currentPhase"] = "Processing"
+    system_status["currentTicketKey"] = issue_key
+    system_status["currentTicketLogs"] = []
+    system_status["currentJiraUrl"] = f"{os.getenv('JIRA_BASE_URL', '')}/browse/{issue_key}"
+    system_status["currentPrUrl"] = None
+    
+    def log_progress(msg):
+        timestamp = time.strftime("%H:%M:%S")
+        log_entry = f"[{timestamp}] {msg}"
+        logger.info(msg)
+        system_status["currentTicketLogs"].append(log_entry)
+
+    log_progress(f"Processing job for {repository} ({language}). Build: {build_cmd}, Test: {test_cmd}")
 
     # 1. Fetch Jira Issue Context
     summary = f"Task for {issue_key}"
@@ -81,87 +350,131 @@ async def process_pipeline_job(data: dict):
 
     owner, repo = repository.split("/")
 
-    # 2. Trigger Copilot Agent via PR (Issue creation skipped as per user request)
-    # The assignment will happen inside create_pull_request
-
-    # Generate Content
-    workflow_content = generate_workflow(repository, language, build_cmd, test_cmd, deploy_target)
-    docker_content = generate_dockerfile(language)
-    
-    # Prepare Files for Commit
-    files = {
-        f".github/workflows/{repo}-ci.yml": workflow_content,
-        "Dockerfile": docker_content
-    }
-
-    # "Single Feature Branch" Strategy
-    branch = f"feature/copilot-{repo}"
-    
-    commit_info = commit_files(
-        owner, repo, branch, files, 
-        message=f"Add CI/CD pipeline and Dockerfile for {issue_key}",
-        issue_key=issue_key
-    )
-    
-    # Create/Update PR (Idempotent)
-    pr_info = create_pull_request(owner, repo, commit_info["branch"], issue_key)
-
-    # 3.5 Trigger Copilot via PR Comment (Only if new PR or context shifted?)
-    # We'll always post comment to trigger scan/review on the latest commit.
     try:
-        copilot_prompt = (
-            f"@copilot please review this PR and fix any issues.\n\n"
-            f"**Task**: {summary}\n"
-            f"**Description**: {description}\n"
-            f"**Jira Issue**: {issue_key}"
-        )
-        post_pr_comment(owner, repo, pr_info["pr_number"], copilot_prompt)
-        logger.info(f"Posted Copilot comment on PR {pr_info['pr_url']}")
-    except Exception as e:
-        logger.warning(f"Failed to post Copilot comment on PR {pr_info['pr_url']}: {e}")
-
-    # 4. Feedback to Jira - Granular Updates
-    if issue_key:
-        # NOTIFY: CI Created
-        try:
-             # Only notify "Created" if it was a new branch/commit, but commit_files notifies anyway.
-             # We can skip redundant "CI Created" comment here since commit_files does it?
-             # But let's keep it for the "Pipeline created" semantics vs just "Committed".
-            post_jira_comment(
-                issue_key, 
-                f"CI/CD Pipeline & Dockerfile updated.",
-                link_text="Commit",
-                link_url=commit_info["commit_url"]
-            )
-            logger.info(f"Posted Jira comment about CI creation for {issue_key}")
-        except Exception as e:
-            logger.warning(f"Failed to post Jira comment about CI creation for {issue_key}: {e}")
+        # 2. Generate Content
+        log_progress("Generating workflow and Dockerfile...")
+        workflow_content = generate_workflow(repository, language, build_cmd, test_cmd, deploy_target)
+        docker_content = generate_dockerfile(language)
+        system_status["currentPayload"] = workflow_content
         
-        # NOTIFY: PR Opened (Only if new)
-        if pr_info.get("is_new"):
+        # Prepare Files for Commit
+        files = {
+            f".github/workflows/{repo}-ci.yml": workflow_content,
+            "Dockerfile": docker_content
+        }
+
+        # "Single Feature Branch" Strategy
+        branch = f"feature/copilot-{repo}"
+        
+        log_progress(f"Committing to branch {branch}...")
+        commit_info = commit_files(
+            owner, repo, branch, files, 
+            message=f"Add CI/CD pipeline and Dockerfile for {issue_key}",
+            issue_key=issue_key
+        )
+        
+        # Create/Update PR (Idempotent)
+        log_progress("Creating/updating Pull Request...")
+        pr_info = create_pull_request(owner, repo, commit_info["branch"], issue_key)
+        system_status["currentPrUrl"] = pr_info["pr_url"]
+
+        # 3.5 Trigger Copilot via PR Comment
+        try:
+            copilot_prompt = (
+                f"@copilot please review this PR and fix any issues.\n\n"
+                f"**Task**: {summary}\n"
+                f"**Description**: {description}\n"
+                f"**Jira Issue**: {issue_key}"
+            )
+            post_pr_comment(owner, repo, pr_info["pr_number"], copilot_prompt)
+            log_progress(f"Posted Copilot comment on PR {pr_info['pr_url']}")
+        except Exception as e:
+            logger.warning(f"Failed to post Copilot comment on PR {pr_info['pr_url']}: {e}")
+
+        # 4. Feedback to Jira - Granular Updates
+        if issue_key:
+            # NOTIFY: CI Created
             try:
                 post_jira_comment(
                     issue_key, 
-                    "Pull Request opened for review.",
-                    link_text="View PR",
-                    link_url=pr_info["pr_url"]
+                    f"CI/CD Pipeline & Dockerfile updated.",
+                    link_text="Commit",
+                    link_url=commit_info["commit_url"]
                 )
-                transition_issue(issue_key, "In Review")
-                logger.info(f"Posted Jira comment and transitioned {issue_key} to 'In Review'")
+                log_progress(f"Posted Jira comment about CI creation for {issue_key}")
             except Exception as e:
-                logger.warning(f"Failed to post Jira comment or transition {issue_key} for PR: {e}")
+                logger.warning(f"Failed to post Jira comment about CI creation for {issue_key}: {e}")
+            
+            # NOTIFY: PR Opened (Only if new)
+            if pr_info.get("is_new"):
+                try:
+                    post_jira_comment(
+                        issue_key, 
+                        "Pull Request opened for review.",
+                        link_text="View PR",
+                        link_url=pr_info["pr_url"]
+                    )
+                    transition_issue(issue_key, "In Review")
+                    log_progress(f"Transitioned {issue_key} to 'In Review'")
+                except Exception as e:
+                    logger.warning(f"Failed to post Jira comment or transition {issue_key} for PR: {e}")
 
-    return {
-        "status": "success",
-        "copilot_issue": copilot_issue_info.get("issue_url"),
-        "ci_pr": pr_info["pr_url"]
-    }
+        # Update history and monitoring
+        system_status["processedCount"] += 1
+        priority = data.get("priority", "Medium")
+        
+        history_item = {
+            "key": issue_key,
+            "priority": priority,
+            "result": "Success",
+            "time": time.strftime("%H:%M:%S"),
+            "jiraUrl": system_status["currentJiraUrl"],
+            "prUrl": pr_info["pr_url"],
+            "repoName": repository,
+            "branch": branch,
+            "payload": workflow_content,
+            "language": language,
+            "deployTarget": deploy_target,
+            "checks": [],
+            "headSha": commit_info.get("sha"),
+            "copilotPrUrl": None,
+            "copilotMerged": False,
+            "toolUsed": None,
+        }
+        
+        system_status["scanHistory"].insert(0, history_item)
+        system_status["monitoredTickets"].append(history_item)
+        
+        log_progress("Pipeline job completed successfully")
 
-    return {
-        "status": "success",
-        "copilot_issue": copilot_issue_info.get("issue_url"),
-        "ci_pr": pr_info["pr_url"]
-    }
+        return {
+            "status": "success",
+            "ci_pr": pr_info["pr_url"]
+        }
+    
+    except Exception as e:
+        log_progress(f"ERROR: {str(e)}")
+        logger.exception(f"Failed to process pipeline job for {issue_key}")
+        
+        # Update history with failure
+        system_status["scanHistory"].insert(0, {
+            "key": issue_key,
+            "priority": data.get("priority", "Medium"),
+            "result": "Failed",
+            "time": time.strftime("%H:%M:%S"),
+            "jiraUrl": system_status["currentJiraUrl"],
+        })
+        
+        if issue_key:
+            try:
+                post_jira_comment(issue_key, f"FAILURE: Could not create workflow. Error: {str(e)}")
+            except:
+                pass
+        
+        return {
+            "status": "error",
+            "message": str(e)
+        }
 
 @app.post("/webhook")
 async def webhook(req: Request):

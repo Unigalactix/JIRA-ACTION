@@ -135,6 +135,7 @@ class Autopilot:
                 "repository": repo_name,
                 "language": config["language"],
                 "deployTarget": config.get("deployTarget"),
+                "priority": ticket.get("priority", "Medium"),
                 # Remove defaults so workflow_factory uses its smart defaults
                 "buildCommand": config.get("buildCommand"), 
                 "testCommand": config.get("testCommand")
