@@ -302,7 +302,7 @@ def find_copilot_sub_pr(repo_name, main_pr_number):
     """
     Find a Copilot-created sub-PR that references the main PR.
     """
-    from copilot_agent.app import COPILOT_USERNAME
+    from copilot_agent.lib.config import COPILOT_USERNAME
     
     owner, repo = repo_name.split("/")
     repository = get_repo(owner, repo)
@@ -516,7 +516,7 @@ def get_active_org_prs_with_jira_keys(org):
     Get all open PRs in an organization that have Jira keys in their title or body.
     """
     import re
-    from copilot_agent.app import JIRA_KEY_PATTERN
+    from copilot_agent.lib.config import JIRA_KEY_PATTERN
     
     token = os.getenv("GHUB_TOKEN") or os.getenv("GITHUB_TOKEN")
     g = _get_github_instance()

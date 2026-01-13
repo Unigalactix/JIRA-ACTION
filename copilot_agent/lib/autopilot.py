@@ -13,12 +13,9 @@ class Autopilot:
     def __init__(self, process_callback):
         self.process_callback = process_callback
         self.running = False
-        # Import interval from app config if available, else use default
-        try:
-            from copilot_agent.app import AUTOPILOT_INTERVAL_SECONDS
-            self.interval = AUTOPILOT_INTERVAL_SECONDS
-        except ImportError:
-            self.interval = 60  # Fallback to 60s if not available
+        # Import interval from config
+        from copilot_agent.lib.config import AUTOPILOT_INTERVAL_SECONDS
+        self.interval = AUTOPILOT_INTERVAL_SECONDS
     
     async def start(self):
         """Start the background polling loop."""

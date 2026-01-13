@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Verification script to test main components of the Python AUTOMATION implementation.
+Verification script to test main components of the Python automation implementation.
 """
 import sys
 import os
@@ -138,7 +138,7 @@ def test_dockerfile():
 def main():
     """Run all tests."""
     print("=" * 60)
-    print("JIRA-ACTION Python AUTOMATION Verification")
+    print("JIRA-ACTION Python automation verification")
     print("=" * 60)
     
     tests = [
@@ -174,7 +174,7 @@ def main():
     print("=" * 60)
     
     if passed == total:
-        print("\n🎉 All tests passed! The Python AUTOMATION implementation is ready.")
+        print("\n🎉 All tests passed! The Python automation implementation is ready.")
         return 0
     else:
         print(f"\n⚠️  {total - passed} test(s) failed. Please review the errors above.")

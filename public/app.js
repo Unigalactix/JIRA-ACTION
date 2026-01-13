@@ -3,6 +3,7 @@ let lastUpdate = null;
 let errorCount = 0;
 const BASE_POLL_INTERVAL = 3000; // Base polling interval in milliseconds
 const MAX_POLL_INTERVAL = 30000; // Maximum polling interval in milliseconds
+const MAX_ERROR_COUNT = 5; // Maximum error count before capping backoff
 
 // Calculate backoff interval based on error count
 function getPollingInterval() {
@@ -21,7 +22,7 @@ async function fetchStatus() {
         errorCount = 0; // Reset error count on success
     } catch (error) {
         console.error('Failed to fetch status:', error);
-        errorCount = Math.min(errorCount + 1, 5); // Cap at 5 to avoid excessive backoff
+        errorCount = Math.min(errorCount + 1, MAX_ERROR_COUNT);
     }
 }
 

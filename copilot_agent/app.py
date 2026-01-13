@@ -13,6 +13,14 @@ from copilot_agent.lib.github import (
 )
 from copilot_agent.lib.jira import post_jira_comment, transition_issue, get_issue_details, search_issues
 from copilot_agent.lib.logger import setup_logger
+from copilot_agent.lib.config import (
+    AUTOPILOT_INTERVAL_SECONDS,
+    DASHBOARD_POLL_INTERVAL_MS,
+    CI_CHECK_INTERVAL_SECONDS,
+    MILLISECONDS_PER_SECOND,
+    COPILOT_USERNAME,
+    JIRA_KEY_PATTERN,
+)
 import os
 import time
 import uuid
@@ -27,12 +35,6 @@ load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 logger = setup_logger("app")
 app = FastAPI()
-
-# Configuration constants
-AUTOPILOT_INTERVAL_SECONDS = 60  # Poll interval in seconds
-DASHBOARD_POLL_INTERVAL_MS = 3000  # Dashboard update interval in milliseconds
-COPILOT_USERNAME = os.getenv("COPILOT_USERNAME", "copilot")  # Configurable Copilot username
-JIRA_KEY_PATTERN = os.getenv("JIRA_KEY_PATTERN", r'\b([A-Z]{2,10}-\d+)\b')  # Configurable Jira key regex
 
 # Load optional per-board POST_PR_STATUS mapping
 BOARD_POST_PR_STATUS_PATH = Path(__file__).parent.parent / "config" / "board_post_pr_status.json"
@@ -67,7 +69,7 @@ system_status = {
     "currentJiraUrl": None,
     "currentPrUrl": None,
     "currentPayload": None,
-    "nextScanTime": time.time() * 1000 + (AUTOPILOT_INTERVAL_SECONDS * 1000),
+    "nextScanTime": time.time() * MILLISECONDS_PER_SECOND + (AUTOPILOT_INTERVAL_SECONDS * MILLISECONDS_PER_SECOND),
 }
 
 # Mount static files for dashboard
@@ -334,7 +336,7 @@ async def monitor_ci_checks():
         except Exception as e:
             logger.error(f"CI monitoring error: {e}")
         
-        await asyncio.sleep(30)  # Check every 30 seconds
+        await asyncio.sleep(CI_CHECK_INTERVAL_SECONDS)
 
 async def process_pipeline_job(data: dict):
     """
