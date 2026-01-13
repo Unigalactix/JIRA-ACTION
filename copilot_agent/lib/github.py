@@ -246,3 +246,313 @@ def create_copilot_issue(owner, repo, issue_key, summary, description):
          logger.warning(f"Failed to add labels to issue #{issue.number}: {e}")
 
     return {"issue_url": issue.html_url, "issue_number": issue.number}
+
+
+def get_latest_workflow_run_for_ref(repo_name, ref):
+    """
+    Get the latest workflow run for a specific ref (branch or SHA).
+    """
+    token = os.getenv("GHUB_TOKEN") or os.getenv("GITHUB_TOKEN")
+    url = f"https://api.github.com/repos/{repo_name}/actions/runs"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+    }
+    params = {
+        "branch": ref,
+        "per_page": 1,
+    }
+    
+    try:
+        response = requests.get(url, headers=headers, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        if data.get("workflow_runs"):
+            return data["workflow_runs"][0]
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to get workflow runs for {repo_name}:{ref}: {e}")
+        return None
+
+
+def get_jobs_for_run(repo_name, run_id):
+    """
+    Get all jobs for a workflow run.
+    """
+    token = os.getenv("GHUB_TOKEN") or os.getenv("GITHUB_TOKEN")
+    url = f"https://api.github.com/repos/{repo_name}/actions/runs/{run_id}/jobs"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+    }
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        return data.get("jobs", [])
+    except Exception as e:
+        logger.warning(f"Failed to get jobs for run {run_id}: {e}")
+        return []
+
+
+def find_copilot_sub_pr(repo_name, main_pr_number):
+    """
+    Find a Copilot-created sub-PR that references the main PR.
+    """
+    from copilot_agent.lib.config import COPILOT_USERNAME
+    
+    owner, repo = repo_name.split("/")
+    repository = get_repo(owner, repo)
+    
+    try:
+        # Get all open PRs
+        pulls = repository.get_pulls(state='open')
+        
+        for pr in pulls:
+            # Check if this is a Copilot PR (by author or title)
+            if pr.user and pr.user.login == COPILOT_USERNAME:
+                # Check if it references our main PR in body or title
+                if pr.body and f"#{main_pr_number}" in pr.body:
+                    return {
+                        "number": pr.number,
+                        "html_url": pr.html_url,
+                        "title": pr.title,
+                        "draft": pr.draft,
+                        "created_at": pr.created_at.isoformat() if pr.created_at else None,
+                        "labels": [{"name": label.name} for label in pr.labels],
+                    }
+        
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to find Copilot sub-PR for {repo_name}#{main_pr_number}: {e}")
+        return None
+
+
+def get_pull_request_details(repo_name, pull_number):
+    """
+    Get details of a specific pull request.
+    """
+    owner, repo = repo_name.split("/")
+    repository = get_repo(owner, repo)
+    
+    try:
+        pr = repository.get_pull(pull_number)
+        return {
+            "number": pr.number,
+            "title": pr.title,
+            "state": pr.state,
+            "merged": pr.merged,
+            "draft": pr.draft,
+            "html_url": pr.html_url,
+            "head": {
+                "ref": pr.head.ref,
+                "sha": pr.head.sha,
+            },
+            "base": {
+                "ref": pr.base.ref,
+            }
+        }
+    except Exception as e:
+        logger.error(f"Failed to get PR details for {repo_name}#{pull_number}: {e}")
+        raise
+
+
+def is_pull_request_merged(repo_name, pull_number):
+    """
+    Check if a pull request is merged.
+    """
+    owner, repo = repo_name.split("/")
+    repository = get_repo(owner, repo)
+    
+    try:
+        pr = repository.get_pull(pull_number)
+        return {"merged": pr.merged}
+    except Exception as e:
+        logger.warning(f"Failed to check if PR is merged {repo_name}#{pull_number}: {e}")
+        return {"merged": False}
+
+
+def mark_pull_request_ready_for_review(repo_name, pull_number):
+    """
+    Mark a draft PR as ready for review.
+    """
+    token = os.getenv("GHUB_TOKEN") or os.getenv("GITHUB_TOKEN")
+    url = f"https://api.github.com/repos/{repo_name}/pulls/{pull_number}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+    }
+    data = {"draft": False}
+    
+    try:
+        response = requests.patch(url, headers=headers, json=data, timeout=10)
+        response.raise_for_status()
+        logger.info(f"Marked PR #{pull_number} as ready for review")
+        return {"ok": True}
+    except Exception as e:
+        logger.error(f"Failed to mark PR #{pull_number} ready: {e}")
+        return {"ok": False, "error": str(e)}
+
+
+def approve_pull_request(repo_name, pull_number):
+    """
+    Approve a pull request.
+    """
+    token = os.getenv("GHUB_TOKEN") or os.getenv("GITHUB_TOKEN")
+    url = f"https://api.github.com/repos/{repo_name}/pulls/{pull_number}/reviews"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+    }
+    data = {
+        "event": "APPROVE",
+        "body": "Auto-approved by Autopilot"
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, json=data, timeout=10)
+        response.raise_for_status()
+        logger.info(f"Approved PR #{pull_number}")
+        return {"ok": True}
+    except Exception as e:
+        logger.warning(f"Failed to approve PR #{pull_number}: {e}")
+        return {"ok": False, "error": str(e)}
+
+
+def enable_pull_request_auto_merge(repo_name, pull_number, merge_method="SQUASH"):
+    """
+    Enable auto-merge for a pull request using GraphQL API.
+    """
+    token = os.getenv("GHUB_TOKEN") or os.getenv("GITHUB_TOKEN")
+    
+    # First get the PR node ID
+    owner, repo = repo_name.split("/")
+    repository = get_repo(owner, repo)
+    
+    try:
+        pr = repository.get_pull(pull_number)
+        pr_node_id = pr.raw_data.get('node_id')
+        
+        if not pr_node_id:
+            return {"ok": False, "message": "Could not get PR node_id"}
+        
+        # Use GraphQL to enable auto-merge
+        graphql_url = "https://api.github.com/graphql"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        
+        query = """
+        mutation($pullRequestId: ID!, $mergeMethod: PullRequestMergeMethod!) {
+          enablePullRequestAutoMerge(input: {
+            pullRequestId: $pullRequestId,
+            mergeMethod: $mergeMethod
+          }) {
+            pullRequest {
+              id
+              autoMergeRequest {
+                enabledAt
+              }
+            }
+          }
+        }
+        """
+        
+        variables = {
+            "pullRequestId": pr_node_id,
+            "mergeMethod": merge_method
+        }
+        
+        response = requests.post(
+            graphql_url,
+            headers=headers,
+            json={"query": query, "variables": variables},
+            timeout=10
+        )
+        response.raise_for_status()
+        data = response.json()
+        
+        if "errors" in data:
+            logger.warning(f"GraphQL errors enabling auto-merge: {data['errors']}")
+            return {"ok": False, "message": str(data['errors'])}
+        
+        logger.info(f"Enabled auto-merge for PR #{pull_number}")
+        return {"ok": True}
+        
+    except Exception as e:
+        logger.warning(f"Failed to enable auto-merge for PR #{pull_number}: {e}")
+        return {"ok": False, "message": str(e)}
+
+
+def merge_pull_request(repo_name, pull_number, method="squash"):
+    """
+    Merge a pull request immediately.
+    """
+    owner, repo = repo_name.split("/")
+    repository = get_repo(owner, repo)
+    
+    try:
+        pr = repository.get_pull(pull_number)
+        result = pr.merge(merge_method=method)
+        
+        if result.merged:
+            logger.info(f"Merged PR #{pull_number}")
+            return {"merged": True}
+        else:
+            logger.warning(f"Failed to merge PR #{pull_number}: {result.message}")
+            return {"merged": False, "message": result.message}
+            
+    except Exception as e:
+        logger.error(f"Failed to merge PR #{pull_number}: {e}")
+        return {"merged": False, "message": str(e)}
+
+
+def get_active_org_prs_with_jira_keys(org):
+    """
+    Get all open PRs in an organization that have Jira keys in their title or body.
+    """
+    import re
+    from copilot_agent.lib.config import JIRA_KEY_PATTERN
+    
+    token = os.getenv("GHUB_TOKEN") or os.getenv("GITHUB_TOKEN")
+    g = _get_github_instance()
+    
+    active_prs = []
+    
+    try:
+        org_obj = g.get_organization(org)
+        repos = org_obj.get_repos()
+        
+        for repo in repos:
+            try:
+                pulls = repo.get_pulls(state='open')
+                
+                for pr in pulls:
+                    # Look for Jira keys using configurable pattern
+                    matches = []
+                    if pr.title:
+                        matches.extend(re.findall(JIRA_KEY_PATTERN, pr.title))
+                    if pr.body:
+                        matches.extend(re.findall(JIRA_KEY_PATTERN, pr.body))
+                    
+                    if matches:
+                        active_prs.append({
+                            "jiraKey": matches[0],  # Use first match
+                            "prUrl": pr.html_url,
+                            "repoName": repo.full_name,
+                            "branch": pr.head.ref,
+                            "headSha": pr.head.sha,
+                        })
+            except Exception as e:
+                logger.warning(f"Failed to get PRs for repo {repo.full_name}: {e}")
+                continue
+        
+        return active_prs
+        
+    except Exception as e:
+        logger.error(f"Failed to get active PRs for org {org}: {e}")
+        return []

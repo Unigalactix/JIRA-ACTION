@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jira Autopilot Dashboard</title>
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🚀 Jira Autopilot & GitHub Automation</h1>
+            <p class="subtitle">Python Edition - Real-time CI/CD Pipeline Monitor</p>
+        </header>
+
+        <div class="status-bar">
+            <div class="status-item">
+                <span class="label">Phase:</span>
+                <span id="currentPhase" class="phase-badge">Initializing</span>
+            </div>
+            <div class="status-item">
+                <span class="label">Processed:</span>
+                <span id="processedCount">0</span>
+            </div>
+            <div class="status-item">
+                <span class="label">Next Scan:</span>
+                <span id="nextScan">--:--</span>
+            </div>
+        </div>
+
+        <div class="main-grid">
+            <section class="panel active-queue">
+                <h2>📋 Active Queue</h2>
+                <div id="activeQueue" class="queue-list">
+                    <div class="empty-state">No tickets in queue</div>
+                </div>
+            </section>
+
+            <section class="panel current-ticket">
+                <h2>🎯 Current Ticket</h2>
+                <div id="currentTicket" class="ticket-details">
+                    <div class="empty-state">No active ticket</div>
+                </div>
+            </section>
+
+            <section class="panel monitored-tickets">
+                <h2>👀 Monitored PRs</h2>
+                <div id="monitoredTickets" class="monitored-list">
+                    <div class="empty-state">No PRs being monitored</div>
+                </div>
+            </section>
+
+            <section class="panel history">
+                <h2>📜 Recent History</h2>
+                <div id="scanHistory" class="history-list">
+                    <div class="empty-state">No history yet</div>
+                </div>
+            </section>
+        </div>
+
+        <footer>
+            <p>Auto-refreshing every 3 seconds | Python FastAPI Backend</p>
+        </footer>
+    </div>
+
+    <script src="/app.js"></script>
+</body>
+</html>

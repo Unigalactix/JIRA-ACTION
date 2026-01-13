@@ -13,7 +13,9 @@ class Autopilot:
     def __init__(self, process_callback):
         self.process_callback = process_callback
         self.running = False
-        self.interval = 60  # Default 60s
+        # Import interval from config
+        from copilot_agent.lib.config import AUTOPILOT_INTERVAL_SECONDS
+        self.interval = AUTOPILOT_INTERVAL_SECONDS
     
     async def start(self):
         """Start the background polling loop."""
@@ -135,6 +137,7 @@ class Autopilot:
                 "repository": repo_name,
                 "language": config["language"],
                 "deployTarget": config.get("deployTarget"),
+                "priority": ticket.get("priority", "Medium"),
                 # Remove defaults so workflow_factory uses its smart defaults
                 "buildCommand": config.get("buildCommand"), 
                 "testCommand": config.get("testCommand")
