@@ -153,7 +153,7 @@ class Autopilot:
             post_jira_comment(issue_key, f"Autopilot failed: {e}")
 
     def _parse_context(self, issue_key, description):
-        """Extract config from JSON block or use Smart Defaults."""
+        """Extract config from JSON block, Regex, or use Smart Defaults."""
         config = {}
         
         # 1. Try JSON Block
@@ -165,7 +165,16 @@ class Autopilot:
             except json.JSONDecodeError:
                 logger.warning(f"Invalid JSON block in {issue_key}")
 
-        # 2. Smart Defaults: Repository
+        # 2. Try Regex Extraction (if no repo in JSON)
+        if not config.get("repository"):
+            # Patterns: "Repository: owner/repo", "Repo: owner/repo", "repository = owner/repo"
+            # Case insensitive, supports colon or equals, optional whitespace
+            repo_match = re.search(r'(?:repository|repo)\s*[:=]\s*([\w\-\.]+/[\w\-\.]+)', description, re.IGNORECASE)
+            if repo_match:
+                config["repository"] = repo_match.group(1).strip()
+                logger.info(f"Extracted repository from description regex: {config['repository']}")
+
+        # 3. Smart Defaults: Repository
         if not config.get("repository"):
             # Try Project-Specific Default
             project_key = issue_key.split("-")[0]
